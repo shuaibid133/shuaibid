@@ -1,0 +1,22 @@
+# Keil 编译中间产物（MDK-ARM/freertos_test/ 下的 .o/.axf/.hex/.map 等）
+*.o
+*.d
+*.crf
+*.axf
+*.hex
+*.map
+*.sct
+*.lnp
+*.dep
+*.htm
+
+# Keil 用户配置（个人化的，不用进仓库）
+*.uvguix
+*.uvgui
+*.uvoptx
+*.bak
+DebugConfig/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
