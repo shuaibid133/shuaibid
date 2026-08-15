@@ -12,10 +12,13 @@
 
 # Keil 用户配置（个人化的，不用进仓库）
 *.uvguix
+*.uvguix.*
 *.uvgui
 *.uvoptx
 *.bak
 DebugConfig/
+JLinkLog.txt
+JLinkSettings.ini
 
 # 系统文件
 Thumbs.db

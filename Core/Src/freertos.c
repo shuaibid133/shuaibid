@@ -25,7 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "./BSP/ATK_MD0280/atk_md0280.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -114,10 +114,19 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
+  uint8_t ret = atk_md0280_init();   /* 0 = 屏幕初始化成功 */
+  if (ret == 0)
+  {
+    atk_md0280_clear(ATK_MD0280_WHITE);
+    atk_md0280_show_string(10, 10, ATK_MD0280_LCD_WIDTH, 24,
+        "Hello RTOS!", ATK_MD0280_LCD_FONT_24, ATK_MD0280_RED);
+  }
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    /* 慢闪 = 屏幕初始化成功；快闪 = init 失败 */
+    osDelay((ret == 0) ? 500 : 100);
   }
   /* USER CODE END StartDefaultTask */
 }
