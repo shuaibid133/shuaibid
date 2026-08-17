@@ -15,6 +15,7 @@
  */
 #include "desktop.h"
 #include "main.h"
+#include <string.h>
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 #include "cursor.h"
 #include "event.h"
@@ -62,13 +63,14 @@ static const char s_key[KEY_ROWS][KEY_COLS] = {
     {'*','0','<'},
 };
 
-/* 桌面图标（阶段4 逐个换成真应用） */
+/* 桌面图标（阶段4 逐个换成真应用）
+ * 注意：atk_md0280 库的 show_string 只支持 ASCII（见库源码），界面文字统一用英文 */
 typedef struct { const char *name; uint16_t color; } app_icon_t;
 static const app_icon_t s_icons[4] = {
-    {"文件管理", ATK_MD0280_BLUE},
-    {"画图",     ATK_MD0280_GREEN},
-    {"音乐",     ATK_MD0280_MAGENTA},
-    {"设置",     ATK_MD0280_YELLOW},
+    {"Files",    ATK_MD0280_BLUE},
+    {"Paint",    ATK_MD0280_GREEN},
+    {"Music",    ATK_MD0280_MAGENTA},
+    {"Settings", ATK_MD0280_YELLOW},
 };
 
 /* ---------- 局部绘制 ---------- */
@@ -118,21 +120,21 @@ static void draw_pwd_dots(void)
     }
 }
 
-/* 提示行（y=15~55 整行重绘）："请输入密码" / "密码错误" 都用它 */
+/* 提示行（y=15~47 整行重绘，46 为界避免擦到 y=52 起的密码圆点） */
 static void draw_hint(const char *str, uint16_t color)
 {
-    atk_md0280_fill(0, 15, SCR_W - 1, 55, ATK_MD0280_WHITE);  /* 先擦后写 */
+    atk_md0280_fill(0, 15, SCR_W - 1, 47, ATK_MD0280_WHITE);  /* 先擦后写 */
     atk_md0280_show_string(80, 24, 240, 16, (char *)str, ATK_MD0280_LCD_FONT_16, color);
 }
 
 /* 锁定提示：显示剩余秒数，每秒刷新 */
 static void draw_lock_hint(uint8_t sec)
 {
-    atk_md0280_fill(0, 15, SCR_W - 1, 55, ATK_MD0280_WHITE);
-    atk_md0280_show_string(40, 24, 100, 16, (char *)"已锁定 ", ATK_MD0280_LCD_FONT_16, CLR_ERR);
-    atk_md0280_show_xnum(110, 24, sec, 2, ATK_MD0280_NUM_SHOW_NOZERO,
+    atk_md0280_fill(0, 15, SCR_W - 1, 47, ATK_MD0280_WHITE);
+    atk_md0280_show_string(40, 24, 100, 16, (char *)"Locked ", ATK_MD0280_LCD_FONT_16, CLR_ERR);
+    atk_md0280_show_xnum(104, 24, sec, 2, ATK_MD0280_NUM_SHOW_NOZERO,
                          ATK_MD0280_LCD_FONT_16, CLR_ERR);
-    atk_md0280_show_string(148, 24, 60, 16, (char *)"秒", ATK_MD0280_LCD_FONT_16, CLR_ERR);
+    atk_md0280_show_string(128, 24, 40, 16, (char *)"s", ATK_MD0280_LCD_FONT_16, CLR_ERR);
 }
 
 /* 光标像素坐标 → 键盘格索引；不在键盘区返回 0xFF */
@@ -155,7 +157,7 @@ static void draw_boot(void)
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_BLUE);
     atk_md0280_show_string(72, 120, 160, 32, (char *)"MINI OS",
                            ATK_MD0280_LCD_FONT_32, ATK_MD0280_WHITE);
-    atk_md0280_show_string(80, 168, 120, 16, (char *)"正在启动...",
+    atk_md0280_show_string(80, 168, 120, 16, (char *)"Starting...",
                            ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
 }
 
@@ -169,9 +171,9 @@ static void enter_login(void)
     s_pwd_len = 0;
     s_hover = 4;
 
-    draw_hint("请输入密码", ATK_MD0280_GRAY);
+    draw_hint("Enter Password", ATK_MD0280_GRAY);
     draw_pwd_dots();
-    atk_md0280_show_string(24, 96, 200, 12, (char *)"摇杆移动选择  SW按下确认",
+    atk_md0280_show_string(24, 96, 200, 12, (char *)"Move: Joystick  OK: SW",
                            ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
     for (i = 0; i < KEY_COLS * KEY_ROWS; i++) draw_key_cell(i, 0);
     draw_key_cell(s_hover, 1);                       /* 初始高亮数字 5 */
@@ -200,7 +202,7 @@ static void enter_desktop(void)
         uint16_t y = 60 + (i / 2) * 100;
         atk_md0280_fill(x, y, x + 80, y + 80, s_icons[i].color);
         atk_md0280_draw_rect(x, y, x + 80, y + 80, ATK_MD0280_GRAY);
-        atk_md0280_show_string(x + (80 - 64) / 2, y + 84, 80, 16,
+        atk_md0280_show_string(x + (80 - strlen(s_icons[i].name) * 8) / 2, y + 84, 80, 16,
                                (char *)s_icons[i].name,
                                ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
     }
@@ -252,6 +254,7 @@ void desktop_handle_event(input_event_t *ev)
                 draw_key_cell(s_hover, 0);
                 s_hover = idx;
                 draw_key_cell(idx, 1);
+                cursor_show();          /* 格子重绘可能盖住光标，画回最上层 */
             }
         } else if (ev->type == EV_KEY_DOWN) {
             /* SW 按下：判定光标所在格 → 输入数字 / 退格 */
@@ -285,7 +288,7 @@ void desktop_handle_event(input_event_t *ev)
                         if (s_fail_cnt >= LOGIN_MAX_FAIL) {
                             lock_screen();   /* 连续错误 → 锁定 */
                         } else {
-                            draw_hint("密码错误", CLR_ERR);
+                            draw_hint("Wrong Password", CLR_ERR);
                         }
                     }
                 }

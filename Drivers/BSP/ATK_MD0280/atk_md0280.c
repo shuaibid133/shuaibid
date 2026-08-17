@@ -781,6 +781,55 @@ uint16_t atk_md0280_read_point(uint16_t x, uint16_t y)
 }
 
 /**
+ * @brief       Read a pixel area into buffer (RGB565).
+ *              One window setup + one read command, then continuous reads
+ *              (GRAM address auto-increments). Used by cursor to save the
+ *              background before drawing, and restore it after moving away.
+ * @param       xs, ys: area top-left; xe, ye: area bottom-right
+ * @param       buf   : output buffer, size >= (xe-xs+1)*(ye-ys+1)
+ */
+void atk_md0280_read_area(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye, uint16_t *buf)
+{
+    uint32_t count = (uint32_t)(xe - xs + 1) * (ye - ys + 1);
+    uint16_t color;
+    uint16_t color_r;
+    uint16_t color_g;
+    uint16_t color_b;
+
+    atk_md0280_set_column_address(xs, xe);
+    atk_md0280_set_page_address(ys, ye);
+    atk_md0280_start_read_memory();
+
+    color = atk_md0280_fsmc_read_dat(); /* Dummy */
+    while (count--)
+    {
+        color = atk_md0280_fsmc_read_dat(); /* [15:11]: R, [7:2]: G */
+        color_r = (uint8_t)(color >> 11) & 0x1F;
+        color_g = (uint8_t)(color >> 2) & 0x3F;
+        color = atk_md0280_fsmc_read_dat(); /* [15:11]: B */
+        color_b = (uint8_t)(color >> 11) & 0x1F;
+        *buf++ = (uint16_t)((color_r << 11) | (color_g << 5) | color_b);
+    }
+}
+
+/**
+ * @brief       Write a pixel area from buffer (RGB565). Used by cursor to
+ *              restore the background after moving away.
+ */
+void atk_md0280_write_area(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye, const uint16_t *buf)
+{
+    uint32_t count = (uint32_t)(xe - xs + 1) * (ye - ys + 1);
+
+    atk_md0280_set_column_address(xs, xe);
+    atk_md0280_set_page_address(ys, ye);
+    atk_md0280_start_write_memory();
+    while (count--)
+    {
+        atk_md0280_fsmc_write_dat(*buf++);
+    }
+}
+
+/**
  * @brief       ATK-MD0280模块LCD画线段
  * @param       x1   : 待画线段端点1的X坐标
  *              y1   : 待画线段端点1的Y坐标

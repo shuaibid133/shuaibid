@@ -92,14 +92,28 @@ void cursor_show(void)
     cursor_draw_at(g_cursor.x, g_cursor.y, ATK_MD0280_BLACK);
 }
 
-/* 擦除：整个外框（黑格 16x18 + 描边 1s，宽 18s、高 20s）填背景色，比逐像素重画快 */
-static void cursor_erase(void)
+/* 光标外框区域分块"先读回、再写回"恢复背景（替代原来的白色填充擦除——
+ * 光标路过文字/图标不再留下白块；缓冲固定 8 行 × 屏宽，任意光标大小都适用） */
+#define CUR_SAVE_ROWS   8
+static uint16_t g_cur_save[CUR_SAVE_ROWS * ATK_MD0280_LCD_WIDTH];
+
+static void cursor_restore_bg(void)
 {
     uint8_t s = g_sys_cfg.cursor_size;
+    int16_t x0 = (int16_t)g_cursor.x - s;
+    int16_t y0 = (int16_t)g_cursor.y - s;
+    int16_t x1 = (int16_t)g_cursor.x + 17 * s - 1;
+    int16_t y1 = (int16_t)g_cursor.y + 19 * s - 1;
+    int16_t yb0;
 
-    atk_md0280_fill(g_cursor.x - s, g_cursor.y - s,
-                    g_cursor.x + 17 * s - 1, g_cursor.y + 19 * s - 1,
-                    ATK_MD0280_WHITE);
+    for (yb0 = y0; yb0 <= y1; yb0 += CUR_SAVE_ROWS)
+    {
+        int16_t yb1 = yb0 + CUR_SAVE_ROWS - 1;
+
+        if (yb1 > y1) yb1 = y1;
+        atk_md0280_read_area((uint16_t)x0, (uint16_t)yb0, (uint16_t)x1, (uint16_t)yb1, g_cur_save);
+        atk_md0280_write_area((uint16_t)x0, (uint16_t)yb0, (uint16_t)x1, (uint16_t)yb1, g_cur_save);
+    }
 }
 
 void cursor_move(int8_t dx, int8_t dy)
@@ -117,7 +131,9 @@ void cursor_move(int8_t dx, int8_t dy)
     if (ny < s)     ny = s;
     if (ny > max_y) ny = max_y;
 
-    cursor_erase();                          /* 擦旧 */
+    if (nx == (int16_t)g_cursor.x && ny == (int16_t)g_cursor.y) return;  /* 位置没变 */
+
+    cursor_restore_bg();                     /* 恢复旧位置背景（无损，不再白块擦除） */
     g_cursor.x = (uint16_t)nx;
     g_cursor.y = (uint16_t)ny;
     cursor_show();                           /* 画新 */
