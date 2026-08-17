@@ -1,4 +1,4 @@
-/* USER CODE BEGIN Header */
+﻿/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * File Name          : freertos.c
@@ -26,6 +26,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "./BSP/ATK_MD0280/atk_md0280.h"
+#include "cursor.h"
+#include "app_config.h"
+#include "event.h"
+#include "input_task.h"
+#include "ui_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,7 +50,19 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+QueueHandle_t g_event_queue;
+osThreadId_t inputTaskHandle;
+osThreadId_t uiTaskHandle;
+const osThreadAttr_t inputTask_attributes = {
+  .name = "inputTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+const osThreadAttr_t uiTask_attributes = {
+  .name = "uiTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -87,7 +104,8 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+  /* event queue: capacity 8, input task produces, UI task consumes */
+  g_event_queue = xQueueCreate(8, sizeof(input_event_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -95,7 +113,10 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* input task: joystick sampling -> event queue (top priority, 15ms period) */
+  inputTaskHandle = osThreadNew(input_task, NULL, &inputTask_attributes);
+  /* UI task: sole owner of LCD rendering, consumes event queue */
+  uiTaskHandle = osThreadNew(ui_task, NULL, &uiTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -114,19 +135,12 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  uint8_t ret = atk_md0280_init();   /* 0 = 屏幕初始化成功 */
-  if (ret == 0)
-  {
-    atk_md0280_clear(ATK_MD0280_WHITE);
-    atk_md0280_show_string(10, 10, ATK_MD0280_LCD_WIDTH, 24,
-        "Hello RTOS!", ATK_MD0280_LCD_FONT_24, ATK_MD0280_RED);
-  }
+  /* LCD init and cursor rendering moved to UI task; this task only toggles LED */
   /* Infinite loop */
   for(;;)
   {
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    /* 慢闪 = 屏幕初始化成功；快闪 = init 失败 */
-    osDelay((ret == 0) ? 500 : 100);
+    osDelay(500);
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -135,4 +149,3 @@ void StartDefaultTask(void *argument)
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-
