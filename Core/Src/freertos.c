@@ -31,6 +31,7 @@
 #include "event.h"
 #include "input_task.h"
 #include "ui_task.h"
+#include "desktop.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

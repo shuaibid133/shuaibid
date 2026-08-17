@@ -41,10 +41,32 @@ if (Test-Path $conf) {
 if (Test-Path $uv) {
     $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
 
-    # 2a. App 组
-    if ($txt.Contains("<GroupName>App</GroupName>")) {
-        $msg += "[uvprojx] App 组已存在，跳过"
+    # 2a. App 组：逐文件检查，缺哪个补哪个（组不存在则整体插入到 Drivers/CMSIS 前）
+    $appFiles = @("cursor.c", "app_config.c", "input_task.c", "ui_task.c", "desktop.c")
+    $missing = @()
+    foreach ($f in $appFiles) {
+        if (-not $txt.Contains("<FileName>$f</FileName>")) { $missing += $f }
+    }
+    if ($missing.Count -eq 0) {
+        $msg += "[uvprojx] App 组文件齐全，跳过"
+    } elseif ($txt.Contains("<GroupName>App</GroupName>")) {
+        # 组存在：把缺失文件插到组内第一个 </Files> 之前
+        $items = ($missing | ForEach-Object {
+            "        <File>`r`n          <FileName>$_</FileName>`r`n          <FileType>1</FileType>`r`n          <FilePath>../App/Src/$_</FilePath>`r`n        </File>"
+        }) -join "`r`n"
+        # 定位 App 组内的 </Files>（不能用第一个：新 CubeMX 模板最前是 Application/MDK-ARM 组）
+        $gi = $txt.IndexOf("<GroupName>App</GroupName>")
+        $anchor = "</Files>"
+        $idx = $txt.IndexOf($anchor, $gi)
+        if ($idx -ge 0) {
+            $newTxt = $txt.Substring(0, $idx) + $items + "`r`n" + $anchor + $txt.Substring($idx + $anchor.Length)
+            [IO.File]::WriteAllText($uv, $newTxt, [Text.Encoding]::UTF8)
+            $msg += "[uvprojx] App 组补齐: " + ($missing -join ", ")
+        } else {
+            $msg += "[uvprojx] 未找到 </Files>！请手动检查"
+        }
     } else {
+        # 组不存在：整体插入
         $appGroup = @"
         <Group>
           <GroupName>App</GroupName>
@@ -68,6 +90,11 @@ if (Test-Path $uv) {
               <FileName>ui_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>../App/Src/ui_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>desktop.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/desktop.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -99,6 +126,18 @@ if (Test-Path $uv) {
         } else {
             $msg += "[uvprojx] 未找到 ../Drivers; 包含路径！"
         }
+    }
+
+    # 2c. uvprojx 必须是"无 BOM 的 UTF-8"——uVision4 5.24 的老解析器读带 BOM
+    #     的工程文件会报 "cannot read project file"、工程树为空（2026-08-17 bug 根因）。
+    #     CubeMX 生成的是无 BOM 版本；若任何工具（包括本脚本的 UTF8 写入）或
+    #     手动编辑引入了 BOM，Keil 就打不开工程，这里兜底剥离。
+    $b = [IO.File]::ReadAllBytes($uv)
+    if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) {
+        [IO.File]::WriteAllBytes($uv, $b[3..($b.Length-1)])
+        $msg += "[uvprojx] 已剥离 BOM（Keil4 不认带 BOM 的工程文件）"
+    } else {
+        $msg += "[uvprojx] 无 BOM，Keil4 可正常读取"
     }
 } else {
     $msg += "[uvprojx] 文件不存在！"
