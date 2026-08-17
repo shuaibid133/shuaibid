@@ -75,6 +75,24 @@ static const app_icon_t s_icons[4] = {
 
 /* ---------- 局部绘制 ---------- */
 
+/* 局部重绘保护：重绘矩形与光标外框相交时，先隐藏光标（写回已存背景，光标从
+ * 屏幕消失），重绘完成后再画回。否则 fill 只盖住光标一部分，"截断光标"会被
+ * cursor_show 当背景存进缓冲，下次移动恢复时固化成残影（数字框边的幽灵）
+ * 返回 1 表示隐藏过（结束时要画回）；不相交则原样直画，零开销 */
+static uint8_t redraw_protect_begin(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    if (cursor_overlap(x0, y0, x1, y1)) {
+        cursor_hide();
+        return 1;
+    }
+    return 0;
+}
+
+static void redraw_protect_end(uint8_t hidden)
+{
+    if (hidden) cursor_show();
+}
+
 /* 画一个键盘格：idx=0~11；hover=1 高亮（浅蓝底+蓝框），0 普通（白底+灰框） */
 static void draw_key_cell(uint8_t idx, uint8_t hover)
 {
@@ -107,34 +125,45 @@ static void draw_key_cell(uint8_t idx, uint8_t hover)
 /* 密码框 4 个圆点：已输入 = 蓝色实心，未输入 = 灰色空心 */
 static void draw_pwd_dots(void)
 {
-    uint8_t i;
+    uint8_t i, hid;
     uint16_t x;
 
+    hid = redraw_protect_begin(60, 52, 60 + 3 * 30 + 6, 58);   /* 圆点区域 */
     for (i = 0; i < 4; i++) {
         x = 60 + i * 30;
         if (i < s_pwd_len) {
             atk_md0280_fill(x, 52, x + 6, 58, ATK_MD0280_BLUE);
         } else {
+            /* 先整块擦白再画 1px 灰框：直接画框的话，之前"蓝色实心"
+             * 的中间 5×5 会残留成蓝块（擦除不彻底，容易误看成还有输入） */
+            atk_md0280_fill(x, 52, x + 6, 58, ATK_MD0280_WHITE);
             atk_md0280_draw_rect(x, 52, x + 6, 58, ATK_MD0280_GRAY);
         }
     }
+    redraw_protect_end(hid);
 }
 
 /* 提示行（y=15~47 整行重绘，46 为界避免擦到 y=52 起的密码圆点） */
 static void draw_hint(const char *str, uint16_t color)
 {
+    uint8_t hid = redraw_protect_begin(0, 15, SCR_W - 1, 47);
+
     atk_md0280_fill(0, 15, SCR_W - 1, 47, ATK_MD0280_WHITE);  /* 先擦后写 */
     atk_md0280_show_string(80, 24, 240, 16, (char *)str, ATK_MD0280_LCD_FONT_16, color);
+    redraw_protect_end(hid);
 }
 
 /* 锁定提示：显示剩余秒数，每秒刷新 */
 static void draw_lock_hint(uint8_t sec)
 {
+    uint8_t hid = redraw_protect_begin(0, 15, SCR_W - 1, 47);
+
     atk_md0280_fill(0, 15, SCR_W - 1, 47, ATK_MD0280_WHITE);
     atk_md0280_show_string(40, 24, 100, 16, (char *)"Locked ", ATK_MD0280_LCD_FONT_16, CLR_ERR);
     atk_md0280_show_xnum(104, 24, sec, 2, ATK_MD0280_NUM_SHOW_NOZERO,
                          ATK_MD0280_LCD_FONT_16, CLR_ERR);
     atk_md0280_show_string(128, 24, 40, 16, (char *)"s", ATK_MD0280_LCD_FONT_16, CLR_ERR);
+    redraw_protect_end(hid);
 }
 
 /* 光标像素坐标 → 键盘格索引；不在键盘区返回 0xFF */
@@ -251,10 +280,26 @@ void desktop_handle_event(input_event_t *ev)
             /* 光标已由 ui_task 移动，这里只更新键盘高亮（重绘旧格+新格） */
             uint8_t idx = hit_key(cx, cy);
             if (idx != 0xFF && idx != s_hover) {
+                uint8_t hid;
+                uint16_t ox, oy, nx, ny, rx0, ry0, rx1, ry1;
+
+                /* 重绘区域 = 旧格 ∪ 新格（并集矩形），先保护再重绘：
+                 * 光标外框(54×60)比格子(60×45)高，fill 只盖得住光标中间，
+                 * 不先隐藏就会存到"截断光标"，下次恢复固化成框边残影 */
+                ox = KEY_X0 + (s_hover % KEY_COLS) * KEY_W;
+                oy = KEY_Y0 + (s_hover / KEY_COLS) * KEY_H;
+                nx = KEY_X0 + (idx % KEY_COLS) * KEY_W;
+                ny = KEY_Y0 + (idx / KEY_COLS) * KEY_H;
+                rx0 = (ox < nx) ? ox : nx;
+                ry0 = (oy < ny) ? oy : ny;
+                rx1 = ((ox > nx) ? ox : nx) + KEY_W - 1;
+                ry1 = ((oy > ny) ? oy : ny) + KEY_H - 1;
+
+                hid = redraw_protect_begin(rx0, ry0, rx1, ry1);
                 draw_key_cell(s_hover, 0);
                 s_hover = idx;
                 draw_key_cell(idx, 1);
-                cursor_show();          /* 格子重绘可能盖住光标，画回最上层 */
+                redraw_protect_end(hid);   /* 重绘完成后再把光标画回最上层 */
             }
         } else if (ev->type == EV_KEY_DOWN) {
             /* SW 按下：判定光标所在格 → 输入数字 / 退格 */

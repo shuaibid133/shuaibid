@@ -781,34 +781,27 @@ uint16_t atk_md0280_read_point(uint16_t x, uint16_t y)
 }
 
 /**
- * @brief       Read a pixel area into buffer (RGB565).
- *              One window setup + one read command, then continuous reads
- *              (GRAM address auto-increments). Used by cursor to save the
- *              background before drawing, and restore it after moving away.
+ * @brief       Read a pixel area into buffer (RGB565). Used by cursor to
+ *              save the background before moving away.
+ * @note        Implemented as per-pixel read_point() calls on purpose:
+ *              experiments show continuous multi-pixel reads after a single
+ *              0x2E command return corrupted data on this panel (only the
+ *              1st pixel is valid; the rest are noise). Per-pixel window
+ *              setup + read cycle is the only reliable path.
  * @param       xs, ys: area top-left; xe, ye: area bottom-right
  * @param       buf   : output buffer, size >= (xe-xs+1)*(ye-ys+1)
  */
 void atk_md0280_read_area(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye, uint16_t *buf)
 {
-    uint32_t count = (uint32_t)(xe - xs + 1) * (ye - ys + 1);
-    uint16_t color;
-    uint16_t color_r;
-    uint16_t color_g;
-    uint16_t color_b;
+    uint16_t x;
+    uint16_t y;
 
-    atk_md0280_set_column_address(xs, xe);
-    atk_md0280_set_page_address(ys, ye);
-    atk_md0280_start_read_memory();
-
-    color = atk_md0280_fsmc_read_dat(); /* Dummy */
-    while (count--)
+    for (y = ys; y <= ye; y++)
     {
-        color = atk_md0280_fsmc_read_dat(); /* [15:11]: R, [7:2]: G */
-        color_r = (uint8_t)(color >> 11) & 0x1F;
-        color_g = (uint8_t)(color >> 2) & 0x3F;
-        color = atk_md0280_fsmc_read_dat(); /* [15:11]: B */
-        color_b = (uint8_t)(color >> 11) & 0x1F;
-        *buf++ = (uint16_t)((color_r << 11) | (color_g << 5) | color_b);
+        for (x = xs; x <= xe; x++)
+        {
+            *buf++ = atk_md0280_read_point(x, y);
+        }
     }
 }
 

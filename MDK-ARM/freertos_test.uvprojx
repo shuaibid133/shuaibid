@@ -385,7 +385,7 @@
               <FileType>2</FileType>
               <FilePath>startup_stm32f103xe.s</FilePath>
             </File>
-        </Files>
+          </Files>
         </Group>
         <Group>
           <GroupName>Application/User/Core</GroupName>

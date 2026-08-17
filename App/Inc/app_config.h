@@ -11,7 +11,7 @@
 /* 系统配置结构体——设置应用改字段，各任务读字段，即改即生效 */
 typedef struct
 {
-    uint8_t cursor_size;    /* 光标大小 1~8 */
+    uint8_t cursor_size;    /* 光标大小 1~4（上限由 cursor.c 背景缓冲决定，>4 会被钳制） */
     uint8_t cursor_sens;    /* 光标灵敏度 1~10 */
 } sys_config_t;
 

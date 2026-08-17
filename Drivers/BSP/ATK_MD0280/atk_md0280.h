@@ -146,7 +146,7 @@ void atk_md0280_fill(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye, uint16_
 void atk_md0280_clear(uint16_t color);                                                                                                                  /* ATK-MD0280模块LCD清屏 */
 void atk_md0280_draw_point(uint16_t x, uint16_t y, uint16_t color);                                                                                     /* ATK-MD0280模块LCD画点 */
 uint16_t atk_md0280_read_point(uint16_t x, uint16_t y);                                                                                                 /* ATK-MD0280模块LCD读点 */
-void atk_md0280_read_area(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye, uint16_t *buf);                                                           /* batch read pixels into buffer (RGB565), for cursor bg restore */
+void atk_md0280_read_area(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye, uint16_t *buf);                                                           /* read pixel area into buffer (RGB565, per-pixel read_point), for cursor bg restore */
 void atk_md0280_write_area(uint16_t xs, uint16_t ys, uint16_t xe, uint16_t ye, const uint16_t *buf);                                                    /* batch write pixels (RGB565), for cursor bg restore */
 void atk_md0280_draw_line(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color);                                                          /* ATK-MD0280模块LCD画线段 */
 void atk_md0280_draw_rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color);                                                          /* ATK-MD0280模块LCD画矩形框 */
