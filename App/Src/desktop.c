@@ -19,6 +19,8 @@
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 #include "cursor.h"
 #include "event.h"
+#include "joystick.h"
+#include "rtc_app.h"
 #include "cmsis_os.h"
 
 /* ---------- 配置参数（阶段6 可改为从 Flash 加载） ---------- */
@@ -143,26 +145,65 @@ static void draw_pwd_dots(void)
     redraw_protect_end(hid);
 }
 
-/* 提示行（y=15~47 整行重绘，46 为界避免擦到 y=52 起的密码圆点） */
+/* 提示行（y=21~47 整行重绘：上界 21 避让顶部 JS 状态，47 避让 y=52 起的密码圆点）。
+ * 文字按 16 号字宽 8px 动态居中，避免长文案（Joystick OFF - Press K0）溢出 */
 static void draw_hint(const char *str, uint16_t color)
 {
-    uint8_t hid = redraw_protect_begin(0, 15, SCR_W - 1, 47);
+    uint8_t hid = redraw_protect_begin(0, 21, SCR_W - 1, 47);
+    uint16_t x = (SCR_W - strlen(str) * 8) / 2;
 
-    atk_md0280_fill(0, 15, SCR_W - 1, 47, ATK_MD0280_WHITE);  /* 先擦后写 */
-    atk_md0280_show_string(80, 24, 240, 16, (char *)str, ATK_MD0280_LCD_FONT_16, color);
+    atk_md0280_fill(0, 21, SCR_W - 1, 47, ATK_MD0280_WHITE);  /* 先擦后写 */
+    atk_md0280_show_string(x, 24, 240, 16, (char *)str, ATK_MD0280_LCD_FONT_16, color);
     redraw_protect_end(hid);
 }
 
 /* 锁定提示：显示剩余秒数，每秒刷新 */
 static void draw_lock_hint(uint8_t sec)
 {
-    uint8_t hid = redraw_protect_begin(0, 15, SCR_W - 1, 47);
+    uint8_t hid = redraw_protect_begin(0, 21, SCR_W - 1, 47);
 
-    atk_md0280_fill(0, 15, SCR_W - 1, 47, ATK_MD0280_WHITE);
+    atk_md0280_fill(0, 21, SCR_W - 1, 47, ATK_MD0280_WHITE);
     atk_md0280_show_string(40, 24, 100, 16, (char *)"Locked ", ATK_MD0280_LCD_FONT_16, CLR_ERR);
     atk_md0280_show_xnum(104, 24, sec, 2, ATK_MD0280_NUM_SHOW_NOZERO,
                          ATK_MD0280_LCD_FONT_16, CLR_ERR);
     atk_md0280_show_string(128, 24, 40, 16, (char *)"s", ATK_MD0280_LCD_FONT_16, CLR_ERR);
+    redraw_protect_end(hid);
+}
+
+/* 输入设备状态：LOGIN 白底 / DESKTOP 蓝条，同一位置（x 100 起，y 4~20）。
+ * "JS:ON" 绿 / "JS:OFF" 红——设备未连接时红色常驻，恢复连接变绿 */
+static void draw_js_status(void)
+{
+    uint16_t bg = (s_state == UI_DESKTOP) ? ATK_MD0280_BLUE : ATK_MD0280_WHITE;
+    uint8_t hid = redraw_protect_begin(100, 4, 164, 20);
+
+    atk_md0280_fill(100, 4, 164, 20, bg);
+    atk_md0280_show_string(100, 5, 56, 16,
+                           (char *)(g_js_on ? "JS:ON " : "JS:OFF"),
+                           ATK_MD0280_LCD_FONT_16,
+                           g_js_on ? ATK_MD0280_GREEN : CLR_ERR);
+    redraw_protect_end(hid);
+}
+
+/* 状态栏时间（DESKTOP 蓝条右侧，y 4~20）：EV_TICK 每秒重画。
+ * 手工拼 "HH:MM" 字符串，避免引入 sprintf 重库 */
+static void draw_clock(void)
+{
+    uint8_t h, m;
+    char buf[6];
+    uint8_t hid;
+
+    rtc_app_get_time(&h, &m);
+    buf[0] = '0' + h / 10;
+    buf[1] = '0' + h % 10;
+    buf[2] = ':';
+    buf[3] = '0' + m / 10;
+    buf[4] = '0' + m % 10;
+    buf[5] = '\0';
+
+    hid = redraw_protect_begin(192, 4, 231, 20);
+    atk_md0280_fill(192, 4, 231, 20, ATK_MD0280_BLUE);
+    atk_md0280_show_string(192, 5, 40, 16, buf, ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
     redraw_protect_end(hid);
 }
 
@@ -200,7 +241,10 @@ static void enter_login(void)
     s_pwd_len = 0;
     s_hover = 4;
 
-    draw_hint("Enter Password", ATK_MD0280_GRAY);
+    /* 设备默认未连接：提示先按 K0 打开摇杆 */
+    draw_hint(g_js_on ? "Enter Password" : "Joystick OFF - Press K0",
+              g_js_on ? ATK_MD0280_GRAY : CLR_ERR);
+    draw_js_status();
     draw_pwd_dots();
     atk_md0280_show_string(24, 96, 200, 12, (char *)"Move: Joystick  OK: SW",
                            ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
@@ -220,10 +264,12 @@ static void enter_desktop(void)
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
     s_state = UI_DESKTOP;
 
-    /* 顶部状态栏 */
+    /* 顶部状态栏：MINI OS | JS 状态 | 时间 */
     atk_md0280_fill(0, 0, SCR_W - 1, 24, ATK_MD0280_BLUE);
     atk_md0280_show_string(8, 5, 100, 16, (char *)"MINI OS",
                            ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
+    draw_js_status();
+    draw_clock();
 
     /* 2×2 图标：80×80 色块 + 下方名字 */
     for (i = 0; i < 4; i++) {
@@ -276,7 +322,13 @@ void desktop_handle_event(input_event_t *ev)
         uint16_t cx, cy;
         cursor_get_pos(&cx, &cy);
 
-        if (ev->type == EV_MOUSE_MOVE) {
+        if (ev->type == EV_DEV_TOGGLE) {
+            /* 设备开关变化（K0）：状态从红 OFF 变绿 ON（或反向），
+             * 提示行同步切换——"设备插上"才能输密码 */
+            draw_js_status();
+            draw_hint(g_js_on ? "Enter Password" : "Joystick OFF - Press K0",
+                      g_js_on ? ATK_MD0280_GRAY : CLR_ERR);
+        } else if (ev->type == EV_MOUSE_MOVE) {
             /* 光标已由 ui_task 移动，这里只更新键盘高亮（重绘旧格+新格） */
             uint8_t idx = hit_key(cx, cy);
             if (idx != 0xFF && idx != s_hover) {
@@ -343,7 +395,11 @@ void desktop_handle_event(input_event_t *ev)
     }
 
     case UI_DESKTOP:
-        if (ev->type == EV_KEY_DOWN) {
+        if (ev->type == EV_DEV_TOGGLE) {
+            draw_js_status();              /* 设备开关：红/绿切换 */
+        } else if (ev->type == EV_TICK) {
+            draw_clock();                  /* 每秒刷新状态栏时间 */
+        } else if (ev->type == EV_KEY_DOWN) {
             /* 阶段4：按光标所在图标打开对应应用 */
         }
         break;

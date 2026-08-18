@@ -25,11 +25,13 @@ if (Test-Path $conf) {
     $txt = $txt.Replace("/*#define HAL_SRAM_MODULE_ENABLED   */", "#define HAL_SRAM_MODULE_ENABLED")
     # 开启 TIM
     $txt = $txt.Replace("/*#define HAL_TIM_MODULE_ENABLED   */", "#define HAL_TIM_MODULE_ENABLED")
+    # 开启 RTC（时间源 rtc_app.c 手动启用，CubeMX 未开 RTC 中间件）
+    $txt = $txt.Replace("/*#define HAL_RTC_MODULE_ENABLED   */", "#define HAL_RTC_MODULE_ENABLED   /* 手动启用：RTC 时间源 */")
     if ($txt -ne $orig) {
         [IO.File]::WriteAllText($conf, $txt, [Text.Encoding]::ASCII)
-        $msg += "[hal_conf.h] 已修复 SRAM/TIM 宏"
+        $msg += "[hal_conf.h] 已修复 SRAM/TIM/RTC 宏"
     } else {
-        $msg += "[hal_conf.h] SRAM/TIM 宏已是开启状态，跳过"
+        $msg += "[hal_conf.h] SRAM/TIM/RTC 宏已是开启状态，跳过"
     }
 } else {
     $msg += "[hal_conf.h] 文件不存在！"
@@ -42,7 +44,8 @@ if (Test-Path $uv) {
     $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
 
     # 2a. App 组：逐文件检查，缺哪个补哪个（组不存在则整体插入到 Drivers/CMSIS 前）
-    $appFiles = @("cursor.c", "app_config.c", "input_task.c", "ui_task.c", "desktop.c")
+    #     注意：joystick.c 在 App/Dev/（dev 层），其余在 App/Src/
+    $appFiles = @("cursor.c", "app_config.c", "input_task.c", "ui_task.c", "desktop.c", "rtc_app.c", "joystick.c")
     $missing = @()
     foreach ($f in $appFiles) {
         if (-not $txt.Contains("<FileName>$f</FileName>")) { $missing += $f }
@@ -52,7 +55,8 @@ if (Test-Path $uv) {
     } elseif ($txt.Contains("<GroupName>App</GroupName>")) {
         # 组存在：把缺失文件插到组内第一个 </Files> 之前
         $items = ($missing | ForEach-Object {
-            "        <File>`r`n          <FileName>$_</FileName>`r`n          <FileType>1</FileType>`r`n          <FilePath>../App/Src/$_</FilePath>`r`n        </File>"
+            $dir = if ($_ -eq "joystick.c") { "Dev" } else { "Src" }
+            "        <File>`r`n          <FileName>$_</FileName>`r`n          <FileType>1</FileType>`r`n          <FilePath>../App/$dir/$_</FilePath>`r`n        </File>"
         }) -join "`r`n"
         # 定位 App 组内的 </Files>（不能用第一个：新 CubeMX 模板最前是 Application/MDK-ARM 组）
         $gi = $txt.IndexOf("<GroupName>App</GroupName>")
@@ -96,6 +100,16 @@ if (Test-Path $uv) {
               <FileType>1</FileType>
               <FilePath>../App/Src/desktop.c</FilePath>
             </File>
+            <File>
+              <FileName>rtc_app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/rtc_app.c</FilePath>
+            </File>
+            <File>
+              <FileName>joystick.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Dev/joystick.c</FilePath>
+            </File>
           </Files>
         </Group>
 "@
@@ -114,7 +128,7 @@ if (Test-Path $uv) {
         }
     }
 
-    # 2b. IncludePath 加 ../App/Inc
+    # 2b. IncludePath 加 ../App/Inc + ../App/Dev（dev 层目录）
     $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
     if ($txt.Contains("../App/Inc")) {
         $msg += "[uvprojx] 包含路径已含 ../App/Inc，跳过"
@@ -125,6 +139,18 @@ if (Test-Path $uv) {
             $msg += "[uvprojx] 包含路径已加 ../App/Inc"
         } else {
             $msg += "[uvprojx] 未找到 ../Drivers; 包含路径！"
+        }
+    }
+    $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
+    if ($txt.Contains("../App/Dev")) {
+        $msg += "[uvprojx] 包含路径已含 ../App/Dev，跳过"
+    } else {
+        $newTxt = $txt.Replace("../App/Src;", "../App/Src;../App/Dev;")
+        if ($newTxt -ne $txt) {
+            [IO.File]::WriteAllText($uv, $newTxt, [Text.Encoding]::UTF8)
+            $msg += "[uvprojx] 包含路径已加 ../App/Dev"
+        } else {
+            $msg += "[uvprojx] 未找到 ../App/Src; 包含路径！"
         }
     }
 
@@ -138,6 +164,31 @@ if (Test-Path $uv) {
         $msg += "[uvprojx] 已剥离 BOM（Keil4 不认带 BOM 的工程文件）"
     } else {
         $msg += "[uvprojx] 无 BOM，Keil4 可正常读取"
+    }
+
+    # 2d. HAL 组兜底：stm32f1xx_hal_rtc.c / _rtc_ex.c——CubeMX 未开 RTC 中间件
+    #     生成时不带这两个文件，但 rtc_app.c 需要（hal_conf.h 已手动开 RTC 宏）
+    $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
+    $halMissing = @()
+    foreach ($hf in @("stm32f1xx_hal_rtc.c", "stm32f1xx_hal_rtc_ex.c")) {
+        if (-not $txt.Contains("<FileName>$hf</FileName>")) { $halMissing += $hf }
+    }
+    if ($halMissing.Count -eq 0) {
+        $msg += "[uvprojx] HAL RTC 文件齐全，跳过"
+    } else {
+        $items = ($halMissing | ForEach-Object {
+            "        <File>`r`n          <FileName>$_</FileName>`r`n          <FileType>1</FileType>`r`n          <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/$_</FilePath>`r`n        </File>"
+        }) -join "`r`n"
+        $gi = $txt.IndexOf("<GroupName>Drivers/STM32F1xx_HAL_Driver</GroupName>")
+        $anchor = "</Files>"
+        $idx = $txt.IndexOf($anchor, $gi)
+        if ($gi -ge 0 -and $idx -ge 0) {
+            $newTxt = $txt.Substring(0, $idx) + $items + "`r`n" + $anchor + $txt.Substring($idx + $anchor.Length)
+            [IO.File]::WriteAllText($uv, $newTxt, [Text.Encoding]::UTF8)
+            $msg += "[uvprojx] HAL 组补齐: " + ($halMissing -join ", ")
+        } else {
+            $msg += "[uvprojx] 未找到 HAL 驱动组！请手动检查"
+        }
     }
 } else {
     $msg += "[uvprojx] 文件不存在！"

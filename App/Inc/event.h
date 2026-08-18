@@ -15,6 +15,8 @@ typedef enum
     EV_MOUSE_MOVE = 0,   /* 摇杆位移事件 */
     EV_KEY_DOWN,         /* 摇杆按键按下 */
     EV_KEY_UP,           /* 摇杆按键释放 */
+    EV_TICK,             /* 1 秒时钟心跳（软件定时器产生，驱动状态栏时间） */
+    EV_DEV_TOGGLE,       /* 输入设备开关取反（K0 按下） */
 } input_event_type_t;
 
 /* 输入事件 */

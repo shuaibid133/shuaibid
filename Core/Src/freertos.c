@@ -75,7 +75,7 @@ const osThreadAttr_t defaultTask_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-
+static void tick_timer_cb(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -101,7 +101,11 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
-  /* start timers, add new ones, ... */
+  /* 1s periodic software timer: callback emits EV_TICK into the event queue,
+     driving the status bar clock. The callback runs in the timer daemon task
+     and must NOT block - a queue send is the only thing it does. */
+  osTimerId_t tickTimer = osTimerNew(tick_timer_cb, osTimerPeriodic, NULL, NULL);
+  osTimerStart(tickTimer, 1000);
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
@@ -149,4 +153,14 @@ void StartDefaultTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+/* 1s tick timer callback: producer of EV_TICK, must not block.
+   UI task is the only consumer - single-writer rendering stays intact. */
+static void tick_timer_cb(void *argument)
+{
+    input_event_t ev = { .type = EV_TICK, .dx = 0, .dy = 0 };
+
+    xQueueSend(g_event_queue, &ev, 0);
+}
+
 /* USER CODE END Application */
+

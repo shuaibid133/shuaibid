@@ -9,6 +9,7 @@
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 #include "cursor.h"
 #include "desktop.h"
+#include "rtc_app.h"
 
 void ui_task(void *argument)
 {
@@ -18,6 +19,7 @@ void ui_task(void *argument)
     if (ret == 0)
     {
         atk_md0280_clear(ATK_MD0280_WHITE);
+        rtc_app_init();                /* 时间源：内部 RTC（LSE，VBAT 保持） */
         desktop_init();                /* BOOT 2秒 → LOGIN，内部完成光标接管 */
     }
 
