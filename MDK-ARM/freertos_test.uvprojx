@@ -730,17 +730,17 @@
               <FileType>1</FileType>
               <FilePath>../App/Src/rtc_app.c</FilePath>
             </File>
-                  <File>
-          <FileName>app.c</FileName>
-          <FileType>1</FileType>
-          <FilePath>../App/Src/app.c</FilePath>
-        </File>
-        <File>
-          <FileName>app_monitor.c</FileName>
-          <FileType>1</FileType>
-          <FilePath>../App/Src/app_monitor.c</FilePath>
-        </File>
-</Files>
+            <File>
+              <FileName>app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/app.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_monitor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/app_monitor.c</FilePath>
+            </File>
+          </Files>
         </Group>
         <Group>
           <GroupName>Drivers/CMSIS</GroupName>

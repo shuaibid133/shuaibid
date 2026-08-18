@@ -452,7 +452,14 @@ void desktop_handle_event(input_event_t *ev)
 
     case UI_DESKTOP:
         if (s_cur_app != NULL) {
-            /* --- 应用前台态：所有事件转发给应用（框架只路由不解析） --- */
+            /* --- 应用前台态 ---
+             * EV_BACK 是系统级导航事件：框架直接接管（返回桌面），
+             * 不发给应用——否则应用忽略它就会"按 K1 退不出来" */
+            if (ev->type == EV_BACK) {
+                enter_desktop();        /* 内部置 s_cur_app = NULL 并重绘桌面 */
+                break;
+            }
+            /* 其余事件（移动/SW/TICK/设备开关）转发给应用自己处理 */
             s_cur_app->handle(ev);
             break;
         }
