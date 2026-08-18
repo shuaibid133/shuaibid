@@ -1,16 +1,20 @@
 /**
  * @file    w25q128.c
- * @brief   W25Q128 SPI NOR Flash 驱动（SPI2 18MHz，Mode 0）
+ * @brief   W25Q128 SPI NOR Flash 驱动（位带 GPIO，Mode 0）
  *
  * 约束：
  *   - 页编程（0x02）一次最多 256 字节，且不能跨页边界 → write() 自动切页
  *   - 扇区擦除（0x20）粒度 4KB，擦除前必须先写使能（0x06）
  *   - 所有命令/数据都以 CS 低有效开始、高电平结束
  *   - 本驱动只被 ui_task 调用（单写者原则），无锁
+ *
+ * 2026-08-18 改为位带（bit-bang）实现：HAL SPI2 阻塞传输导致全系统
+ * 冻结（现象/复现/根因见开发日志），位带只操作 GPIOB 寄存器，
+ * 不依赖 SPI2 外设时钟与 HAL 超时逻辑，运行稳定。
+ * 注意：使用前会把 PB13/14/15 从 SPI2 复用改回普通 GPIO（CRH 直写）。
  */
 #include "w25q128.h"
-#include "main.h"      /* W25Q_CS 引脚宏（CubeMX 生成） */
-#include "spi.h"       /* hspi2 */
+#include "main.h"      /* W25Q_CS 引脚宏（CubeMX 生成，仅借用端口定义） */
 
 /* ---------- 命令码 ---------- */
 #define W25Q_CMD_WRITE_ENABLE   0x06
@@ -28,17 +32,55 @@
 /* 状态寄存器 1 的 WIP 位（Busy 标志） */
 #define W25Q_SR1_WIP      0x01
 
-/* 读数据时 MOSI 输出的空数据（内容无关，Flash 只读） */
-static uint8_t s_dummy[256];
+/* 引脚位带定义（GPIOB 寄存器直写，不经过 HAL）：
+ * CS=PB12 SCK=PB13 MISO=PB14 MOSI=PB15 */
+#define BB_GPIOB_ODR      (*(volatile uint32_t *)0x40010C0Cu)
+#define BB_GPIOB_IDR      (*(volatile uint32_t *)0x40010C10u)
+#define BB_GPIOB_CRH      (*(volatile uint32_t *)0x40010C04u)
+#define BB_CS_PIN   (1u << 12)
+#define BB_SCK_PIN  (1u << 13)
+#define BB_MISO_PIN (1u << 14)
+#define BB_MOSI_PIN (1u << 15)
 
-static void cs_low(void)  { HAL_GPIO_WritePin(W25Q_CS_GPIO_Port, W25Q_CS_Pin, GPIO_PIN_RESET); }
-static void cs_high(void) { HAL_GPIO_WritePin(W25Q_CS_GPIO_Port, W25Q_CS_Pin, GPIO_PIN_SET); }
-
-/* 单字节全双工交换 */
-static uint8_t spi_byte(uint8_t tx)
+/* 位延时：主频 72MHz 下约 8 个周期 ≈ 0.1us → 位周期约 1us（~1MHz SCK，
+ * W25Q128 读速率上限 50MHz，余量充足） */
+static void bb_delay(void)
 {
-    uint8_t rx;
-    HAL_SPI_TransmitReceive(&hspi2, &tx, &rx, 1, 100);
+    uint8_t i;
+    for (i = 0; i < 6; i++) { __NOP(); }
+}
+
+/* 把 PB13/14/15 从 SPI2 复用改为 GPIO（CRH 直接写）：
+ * 13/15 = 推挽输出 2MHz（CNF=00 MODE=10），14 = 上拉输入（CNF=10 MODE=00） */
+static void bb_pin_setup(void)
+{
+    BB_GPIOB_CRH = (BB_GPIOB_CRH & ~(0xFFFFu << 20))   /* 清 PB13-15 四位的配置 */
+                 | (0x2u << 20)   /* PB13 输出 */
+                 | (0x8u << 24)   /* PB14 输入（CNF=10 上拉/下拉，MODE=00） */
+                 | (0x2u << 28);  /* PB15 输出 */
+    /* 输入上拉（CNF=10 时 ODR 决定上/下拉）：MISO 空闲高 */
+    BB_GPIOB_ODR |= BB_MISO_PIN;
+}
+
+static void bb_cs_low(void)  { BB_GPIOB_ODR &= ~BB_CS_PIN; }
+static void bb_cs_high(void) { BB_GPIOB_ODR |= BB_CS_PIN; }
+
+/* 单字节全双工交换（MSB 先出，CPOL=0/CPHA=1：SCK 上升沿采样） */
+static uint8_t bb_byte(uint8_t tx)
+{
+    uint8_t rx = 0, i;
+
+    for (i = 0; i < 8; i++) {
+        if (tx & 0x80u) BB_GPIOB_ODR |= BB_MOSI_PIN;
+        else            BB_GPIOB_ODR &= ~BB_MOSI_PIN;
+        tx <<= 1;
+        bb_delay();
+        BB_GPIOB_ODR &= ~BB_SCK_PIN;   /* 低半周期 */
+        bb_delay();
+        BB_GPIOB_ODR |= BB_SCK_PIN;    /* 上升沿：Flash 在此时锁存 MOSI，MCU 采样 MISO */
+        bb_delay();
+        rx = (uint8_t)((rx << 1) | ((BB_GPIOB_IDR & BB_MISO_PIN) ? 1u : 0u));
+    }
     return rx;
 }
 
@@ -46,69 +88,67 @@ static uint8_t spi_byte(uint8_t tx)
 static void spi_rx(uint8_t *buf, uint32_t n)
 {
     while (n > 0) {
-        uint32_t k = (n > 256) ? 256 : n;
-        HAL_SPI_TransmitReceive(&hspi2, s_dummy, buf, k, 1000);
-        buf += k;
-        n -= k;
+        *buf++ = bb_byte(0xFF);
+        n--;
     }
 }
 
-/* 等待内部忙完（WIP 清零），超时返回 1=失败 */
-static uint8_t wait_busy(uint32_t ms_timeout)
+/* 等待内部忙完（WIP 清零），超时返回 1=失败
+ * （位带版超时用自减计数器，不依赖 HAL_GetTick） */
+static uint8_t wait_busy(uint32_t loops)
 {
-    uint32_t t0 = HAL_GetTick();
+    uint32_t t = 0;
 
-    cs_low();
-    spi_byte(W25Q_CMD_READ_STATUS);
-    while (spi_byte(0xFF) & W25Q_SR1_WIP) {
-        if (HAL_GetTick() - t0 > ms_timeout) {
-            cs_high();
+    bb_cs_low();
+    bb_byte(W25Q_CMD_READ_STATUS);
+    while (bb_byte(0xFF) & W25Q_SR1_WIP) {
+        if (++t > loops) {
+            bb_cs_high();
             return 1;
         }
     }
-    cs_high();
+    bb_cs_high();
     return 0;
 }
 
 /* 写使能：擦除/编程前必须执行（W25Q 每次编程后自动清 WEL） */
 static void write_enable(void)
 {
-    cs_low();
-    spi_byte(W25Q_CMD_WRITE_ENABLE);
-    cs_high();
+    bb_cs_low();
+    bb_byte(W25Q_CMD_WRITE_ENABLE);
+    bb_cs_high();
 }
 
 uint32_t w25q128_read_id(void)
 {
     uint32_t id;
 
-    cs_low();
-    spi_byte(W25Q_CMD_JEDEC_ID);
-    id  = (uint32_t)spi_byte(0xFF) << 16;
-    id |= (uint32_t)spi_byte(0xFF) << 8;
-    id |= (uint32_t)spi_byte(0xFF);
-    cs_high();
+    bb_cs_low();
+    bb_byte(W25Q_CMD_JEDEC_ID);
+    id  = (uint32_t)bb_byte(0xFF) << 16;
+    id |= (uint32_t)bb_byte(0xFF) << 8;
+    id |= (uint32_t)bb_byte(0xFF);
+    bb_cs_high();
     return id;
 }
 
 uint8_t w25q128_init(void)
 {
-    uint8_t i;
-
-    for (i = 0; i < sizeof(s_dummy); i++) s_dummy[i] = 0xFF;
+    bb_pin_setup();                          /* PB13-15: SPI2 复用 → 普通 GPIO */
+    bb_cs_high();                            /* CS 空闲高 */
     return (w25q128_read_id() == W25Q_ID_W25Q128) ? 1 : 0;
 }
 
 /* 连续读：0x03 命令不限制页边界，可一次读完任意长度 */
 void w25q128_read(uint32_t addr, uint8_t *buf, uint32_t n)
 {
-    cs_low();
-    spi_byte(W25Q_CMD_READ_DATA);
-    spi_byte(addr >> 16);
-    spi_byte(addr >> 8);
-    spi_byte(addr);
+    bb_cs_low();
+    bb_byte(W25Q_CMD_READ_DATA);
+    bb_byte(addr >> 16);
+    bb_byte(addr >> 8);
+    bb_byte(addr);
     spi_rx(buf, n);
-    cs_high();
+    bb_cs_high();
 }
 
 /* 写：按 256B 页切分，每页独立 写使能→页编程→等忙 */
@@ -120,14 +160,14 @@ void w25q128_write(uint32_t addr, const uint8_t *buf, uint32_t n)
         uint32_t i;
 
         write_enable();
-        cs_low();
-        spi_byte(W25Q_CMD_PAGE_PROGRAM);
-        spi_byte(addr >> 16);
-        spi_byte(addr >> 8);
-        spi_byte(addr);
-        for (i = 0; i < k; i++) spi_byte(buf[i]);
-        cs_high();
-        wait_busy(50);
+        bb_cs_low();
+        bb_byte(W25Q_CMD_PAGE_PROGRAM);
+        bb_byte(addr >> 16);
+        bb_byte(addr >> 8);
+        bb_byte(addr);
+        for (i = 0; i < k; i++) bb_byte(buf[i]);
+        bb_cs_high();
+        wait_busy(30000);                    /* 页编程典型 3ms，余量足够 */
         addr += k;
         buf += k;
         n -= k;
@@ -137,11 +177,11 @@ void w25q128_write(uint32_t addr, const uint8_t *buf, uint32_t n)
 void w25q128_erase_sector(uint32_t addr)
 {
     write_enable();
-    cs_low();
-    spi_byte(W25Q_CMD_SECTOR_ERASE);
-    spi_byte(addr >> 16);
-    spi_byte(addr >> 8);
-    spi_byte(addr);
-    cs_high();
-    wait_busy(500);      /* 4K 擦除典型 40ms，留足余量 */
+    bb_cs_low();
+    bb_byte(W25Q_CMD_SECTOR_ERASE);
+    bb_byte(addr >> 16);
+    bb_byte(addr >> 8);
+    bb_byte(addr);
+    bb_cs_high();
+    wait_busy(200000);                       /* 4K 擦除典型 40ms，最坏 400ms，留足余量 */
 }
