@@ -40,7 +40,8 @@ static void redraw_protect_end(uint8_t hidden)
 /* 刷新监控内容区（y≥28：标题栏以下整块重绘） */
 static void draw_content(void)
 {
-    TaskStatus_t ts[8];
+    static TaskStatus_t ts[8];   /* 静态区：TaskStatus_t 约 40B×8=320B，
+                                  * ui_task 栈只有 1KB，放栈上会压垮调用链 */
     uint32_t n, heap;
     uint8_t i, hid;
     uint16_t y;
@@ -69,12 +70,15 @@ static void draw_content(void)
     redraw_protect_end(hid);
 }
 
-/* 进入应用：全屏自绘 + 立即刷一次数据（不显示光标：纯监控界面） */
+/* 进入应用：全屏自绘 + 立即刷一次数据。
+ * 光标显示在内容区下方空白处（可自由移动，监控界面不参与交互） */
 void app_monitor_open(void)
 {
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
     app_draw_title("System Monitor");
     draw_content();
+    cursor_init(120, 250);      /* 屏内安全位：外框 (117,247)~(171,306) 不越界 */
+    cursor_show();
 }
 
 /* 事件分发：只要 EV_TICK 每秒刷新；摇杆/SW 事件忽略 */

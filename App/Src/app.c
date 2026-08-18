@@ -12,6 +12,7 @@
  */
 #include "app.h"
 #include "app_monitor.h"
+#include "cursor.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 
 #define SCR_W   ATK_MD0280_LCD_WIDTH
@@ -31,6 +32,8 @@ static void app_stub_open(void)
                            (char *)"Coming Soon", ATK_MD0280_LCD_FONT_24, ATK_MD0280_GRAY);
     atk_md0280_show_string((SCR_W - 20 * 8) / 2, 196, 240, 16,
                            (char *)"Press K1 to go back", ATK_MD0280_LCD_FONT_16, ATK_MD0280_GRAY);
+    cursor_init(120, 250);      /* 屏内安全位：外框 (117,247)~(171,306) 不越界 */
+    cursor_show();
 }
 
 /* ---------- 应用注册表 ----------
