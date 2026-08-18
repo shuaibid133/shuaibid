@@ -875,7 +875,12 @@
               <FileType>1</FileType>
               <FilePath>../App/FatFs/diskio.c</FilePath>
             </File>
-          </Files>
+                  <File>
+          <FileName>fault_report.c</FileName>
+          <FileType>1</FileType>
+          <FilePath>../App/Src/fault_report.c</FilePath>
+        </File>
+</Files>
         </Group>
         <Group>
           <GroupName>Drivers/CMSIS</GroupName>

@@ -57,6 +57,7 @@ if (Test-Path $uv) {
         @{ n = "app_files.c";   d = "Src" },
         @{ n = "sys_stats.c";   d = "Src" },
         @{ n = "w25q128.c";     d = "Src" },
+        @{ n = "fault_report.c"; d = "Src" },
         @{ n = "joystick.c";    d = "Dev" },
         @{ n = "ff.c";          d = "FatFs" },
         @{ n = "diskio.c";      d = "FatFs" }

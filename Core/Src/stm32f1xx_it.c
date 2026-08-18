@@ -22,6 +22,7 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "fault_report.h"   /* HardFault 现场显示（App/Src/fault_report.c） */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -85,7 +86,8 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  /* Dump fault context to the LCD (PC/LR/HFSR/CFSR/BFAR/MMAR), then trap. */
+  fault_report((uint32_t *)__get_MSP());
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
