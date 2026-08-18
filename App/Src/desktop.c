@@ -2,10 +2,13 @@
  * @file    desktop.c
  * @brief   桌面框架：上电启动界面 → 密码登录 → 桌面主界面
  *
- * 架构：由 ui_task 逐事件调用（ui_task 只做事件分发，本文件是第一个"应用"）
- *   - 状态机：UI_BOOT → UI_LOGIN → UI_DESKTOP
+ * 架构：由 ui_task 逐事件调用（ui_task 只做事件分发，本文件是桌面框架）
+ *   - 状态机：UI_BOOT → UI_LOGIN → UI_DESKTOP（桌面态内嵌应用前台态：
+ *     s_cur_app 非空时事件全部转发给注册表中的应用，K1 返回桌面）
  *   - 密码 4 位，错误提示，连续错误进入锁定（倒计时，输入全部无效）
  *   - 数字键盘交互：摇杆移光标选格（蓝框高亮），SW 按下输入
+ *   - K1 逐级回退：应用 → 桌面（锁屏） → 登录页
+ *   - 桌面图标来自应用注册表（app.c）：hover 白框高亮，SW 打开
  *
  * 关键点：
  *   - 屏幕 240×320 竖屏（ATK-MD0280 默认方向）
@@ -14,6 +17,7 @@
  *   - 切换界面时 xQueueReset 清掉积压事件，防止旧事件污染新界面
  */
 #include "desktop.h"
+#include "app.h"
 #include "main.h"
 #include <string.h>
 #include "./BSP/ATK_MD0280/atk_md0280.h"
@@ -40,6 +44,15 @@
 #define KEY_X0              30
 #define KEY_Y0              120
 
+/* 桌面图标区：3 列 × 2 行，色块 68×60（名字在色块下方；2 行高度内放得下） */
+#define ICON_COLS           3
+#define ICON_W              68
+#define ICON_H              60
+#define ICON_X0             18
+#define ICON_Y0             60
+#define ICON_GAP_X          73
+#define ICON_GAP_Y          80
+
 /* ---------- 颜色（RGB565） ---------- */
 #define CLR_KEY_HOV_BG      0x7DFC    /* 高亮格浅蓝底 */
 #define CLR_ERR             ATK_MD0280_RED
@@ -55,7 +68,9 @@ static ui_state_t s_state = UI_BOOT;
 static char  s_pwd[4];          /* 已输入密码 */
 static uint8_t s_pwd_len = 0;
 static uint8_t s_fail_cnt = 0;  /* 连续错误计数 */
-static int8_t  s_hover = 4;     /* 高亮格索引 0~11 */
+static int8_t  s_hover = 4;     /* 键盘高亮格索引 0~11 */
+static const app_t *s_cur_app = NULL;  /* 非空 = 应用前台态（注册表指针） */
+static int8_t  s_hover_icon = -1;      /* 桌面 hover 图标索引（-1 = 无） */
 
 /* 键盘内容：'*' = 占位空格，'<' = 退格 */
 static const char s_key[KEY_ROWS][KEY_COLS] = {
@@ -65,15 +80,9 @@ static const char s_key[KEY_ROWS][KEY_COLS] = {
     {'*','0','<'},
 };
 
-/* 桌面图标（阶段4 逐个换成真应用）
- * 注意：atk_md0280 库的 show_string 只支持 ASCII（见库源码），界面文字统一用英文 */
-typedef struct { const char *name; uint16_t color; } app_icon_t;
-static const app_icon_t s_icons[4] = {
-    {"Files",    ATK_MD0280_BLUE},
-    {"Paint",    ATK_MD0280_GREEN},
-    {"Music",    ATK_MD0280_MAGENTA},
-    {"Settings", ATK_MD0280_YELLOW},
-};
+/* 桌面图标：来自应用注册表 g_apps（app.c）——框架不重复维护图标数组，
+ * 图标绘制/命中/打开全部遍历注册表，加应用 = 表里加一行 */
+/* 注意：atk_md0280 库的 show_string 只支持 ASCII（见库源码），界面文字统一用英文 */
 
 /* ---------- 局部绘制 ---------- */
 
@@ -122,6 +131,27 @@ static void draw_key_cell(uint8_t idx, uint8_t hover)
         atk_md0280_show_char(x0 + (KEY_W - 12) / 2, y0 + (KEY_H - 24) / 2,
                              c, ATK_MD0280_LCD_FONT_24, ATK_MD0280_BLACK);
     }
+}
+
+/* 画一个桌面图标：idx = 注册表索引；hover=1 高亮（色块外侧 2px 白色外框） */
+static void draw_icon(uint8_t idx, uint8_t hover)
+{
+    uint16_t x = ICON_X0 + (idx % ICON_COLS) * ICON_GAP_X;
+    uint16_t y = ICON_Y0 + (idx / ICON_COLS) * ICON_GAP_Y;
+
+    /* 先整块擦成桌面底色（白）：hover 切回普通时不残留白色外框 */
+    atk_md0280_fill(x - 2, y - 2, x + ICON_W + 1, y + ICON_H + 1, ATK_MD0280_WHITE);
+    atk_md0280_fill(x, y, x + ICON_W, y + ICON_H, g_apps[idx].color);
+    if (hover) {
+        atk_md0280_draw_rect(x - 2, y - 2, x + ICON_W + 1, y + ICON_H + 1, ATK_MD0280_WHITE);
+    } else {
+        atk_md0280_draw_rect(x, y, x + ICON_W, y + ICON_H, ATK_MD0280_GRAY);
+    }
+    /* 名字在色块下方，块宽内居中（16 号，字宽 8px） */
+    atk_md0280_show_string(x + (ICON_W - strlen(g_apps[idx].name) * 8) / 2,
+                           y + ICON_H + 4, ICON_W, 16,
+                           (char *)g_apps[idx].name,
+                           ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
 }
 
 /* 密码框 4 个圆点：已输入 = 蓝色实心，未输入 = 灰色空心 */
@@ -219,6 +249,20 @@ static uint8_t hit_key(uint16_t x, uint16_t y)
     return row * KEY_COLS + col;
 }
 
+/* 光标坐标 → 注册表图标索引；不在任何图标色块内返回 0xFF */
+static uint8_t hit_icon(uint16_t x, uint16_t y)
+{
+    uint8_t i;
+    uint16_t ix, iy;
+
+    for (i = 0; i < g_app_count; i++) {
+        ix = ICON_X0 + (i % ICON_COLS) * ICON_GAP_X;
+        iy = ICON_Y0 + (i / ICON_COLS) * ICON_GAP_Y;
+        if (x >= ix && x <= ix + ICON_W && y >= iy && y <= iy + ICON_H) return i;
+    }
+    return 0xFF;
+}
+
 /* ---------- 界面 ---------- */
 
 /* BOOT：蓝底 + 项目名 */
@@ -271,19 +315,25 @@ static void enter_desktop(void)
     draw_js_status();
     draw_clock();
 
-    /* 2×2 图标：80×80 色块 + 下方名字 */
-    for (i = 0; i < 4; i++) {
-        uint16_t x = 20 + (i % 2) * 120;
-        uint16_t y = 60 + (i / 2) * 100;
-        atk_md0280_fill(x, y, x + 80, y + 80, s_icons[i].color);
-        atk_md0280_draw_rect(x, y, x + 80, y + 80, ATK_MD0280_GRAY);
-        atk_md0280_show_string(x + (80 - strlen(s_icons[i].name) * 8) / 2, y + 84, 80, 16,
-                               (char *)s_icons[i].name,
-                               ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    /* 图标网格：遍历注册表绘制；光标定位第 1 个图标中心，初始即高亮 */
+    s_cur_app = NULL;                    /* 回到桌面态（可能从应用返回） */
+    s_hover_icon = 0;
+    for (i = 0; i < g_app_count; i++) {
+        draw_icon(i, i == (uint8_t)s_hover_icon);
     }
 
-    cursor_init(60, 100);
+    cursor_init(ICON_X0 + ICON_W / 2, ICON_Y0 + ICON_H / 2);
     cursor_show();
+}
+
+/* 打开应用：先把光标藏好（已存背景写回屏幕，界面干净），再让应用自己全屏
+ * 绘制。进入时光标是"隐藏且状态干净"的，应用自行决定是否显示光标
+ * （Monitor 纯显示不显示，Files/Paint 交互类显示） */
+static void launch_app(uint8_t idx)
+{
+    cursor_hide();
+    s_cur_app = &g_apps[idx];
+    s_cur_app->open();
 }
 
 /* 连续错误锁定：倒计时期间事件全部无效，结束后清队列回 LOGIN */
@@ -353,6 +403,12 @@ void desktop_handle_event(input_event_t *ev)
                 draw_key_cell(idx, 1);
                 redraw_protect_end(hid);   /* 重绘完成后再把光标画回最上层 */
             }
+        } else if (ev->type == EV_BACK) {
+            /* K1 = 清空已输密码（"取消输入"） */
+            if (s_pwd_len > 0) {
+                s_pwd_len = 0;
+                draw_pwd_dots();
+            }
         } else if (ev->type == EV_KEY_DOWN) {
             /* SW 按下：判定光标所在格 → 输入数字 / 退格 */
             uint8_t idx, ok = 1, i;
@@ -395,12 +451,57 @@ void desktop_handle_event(input_event_t *ev)
     }
 
     case UI_DESKTOP:
+        if (s_cur_app != NULL) {
+            /* --- 应用前台态：所有事件转发给应用（框架只路由不解析） --- */
+            s_cur_app->handle(ev);
+            break;
+        }
+        /* --- 桌面态 --- */
         if (ev->type == EV_DEV_TOGGLE) {
             draw_js_status();              /* 设备开关：红/绿切换 */
         } else if (ev->type == EV_TICK) {
             draw_clock();                  /* 每秒刷新状态栏时间 */
+        } else if (ev->type == EV_BACK) {
+            /* 桌面按 K1 = 锁屏：回登录页（重置连续错误计数，重新累计） */
+            s_fail_cnt = 0;
+            enter_login();
+        } else if (ev->type == EV_MOUSE_MOVE) {
+            /* 光标已由 ui_task 移动：图标 hover 高亮（重绘旧格+新格） */
+            uint16_t cx, cy, nx, ny, ox, oy, rx0, ry0, rx1, ry1;
+            uint8_t idx, hid;
+            int8_t old = s_hover_icon;
+
+            cursor_get_pos(&cx, &cy);
+            idx = hit_icon(cx, cy);
+            if (idx != 0xFF && idx != (uint8_t)old) {
+                nx = ICON_X0 + (idx % ICON_COLS) * ICON_GAP_X;
+                ny = ICON_Y0 + (idx / ICON_COLS) * ICON_GAP_Y;
+                if (old >= 0) {
+                    /* 并集矩形 = 旧图标 ∪ 新图标（含 2px 高亮外框余量） */
+                    ox = ICON_X0 + (old % ICON_COLS) * ICON_GAP_X;
+                    oy = ICON_Y0 + (old / ICON_COLS) * ICON_GAP_Y;
+                    rx0 = (ox < nx ? ox : nx) - 2;
+                    ry0 = (oy < ny ? oy : ny) - 2;
+                    rx1 = (ox > nx ? ox : nx) + ICON_W + 1;
+                    ry1 = (oy > ny ? oy : ny) + ICON_H + 1;
+                } else {
+                    rx0 = nx - 2; ry0 = ny - 2;
+                    rx1 = nx + ICON_W + 1; ry1 = ny + ICON_H + 1;
+                }
+                hid = redraw_protect_begin(rx0, ry0, rx1, ry1);
+                if (old >= 0) draw_icon(old, 0);
+                s_hover_icon = idx;
+                draw_icon(idx, 1);
+                redraw_protect_end(hid);
+            }
         } else if (ev->type == EV_KEY_DOWN) {
-            /* 阶段4：按光标所在图标打开对应应用 */
+            /* SW 按下：命中图标则打开对应应用 */
+            uint16_t cx, cy;
+            uint8_t idx;
+
+            cursor_get_pos(&cx, &cy);
+            idx = hit_icon(cx, cy);
+            if (idx != 0xFF) launch_app(idx);
         }
         break;
     }

@@ -17,6 +17,7 @@ typedef enum
     EV_KEY_UP,           /* 摇杆按键释放 */
     EV_TICK,             /* 1 秒时钟心跳（软件定时器产生，驱动状态栏时间） */
     EV_DEV_TOGGLE,       /* 输入设备开关取反（K0 按下） */
+    EV_BACK,             /* 返回键（K1 按下）：应用→桌面→锁屏，逐级回退 */
 } input_event_type_t;
 
 /* 输入事件 */

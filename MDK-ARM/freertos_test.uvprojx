@@ -491,6 +491,16 @@
               <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_ll_fsmc.c</FilePath>
             </File>
             <File>
+              <FileName>stm32f1xx_hal_rtc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rtc.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f1xx_hal_rtc_ex.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rtc_ex.c</FilePath>
+            </File>
+            <File>
               <FileName>stm32f1xx_hal_gpio_ex.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c</FilePath>
@@ -641,16 +651,6 @@
               <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_pwr.c</FilePath>
             </File>
             <File>
-              <FileName>stm32f1xx_hal_rtc.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rtc.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32f1xx_hal_rtc_ex.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rtc_ex.c</FilePath>
-            </File>
-            <File>
               <FileName>stm32f1xx_hal_flash.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash.c</FilePath>
@@ -730,7 +730,17 @@
               <FileType>1</FileType>
               <FilePath>../App/Src/rtc_app.c</FilePath>
             </File>
-          </Files>
+                  <File>
+          <FileName>app.c</FileName>
+          <FileType>1</FileType>
+          <FilePath>../App/Src/app.c</FilePath>
+        </File>
+        <File>
+          <FileName>app_monitor.c</FileName>
+          <FileType>1</FileType>
+          <FilePath>../App/Src/app_monitor.c</FilePath>
+        </File>
+</Files>
         </Group>
         <Group>
           <GroupName>Drivers/CMSIS</GroupName>

@@ -6,6 +6,7 @@
  *   - 摇杆双轴 ADC 采样：死区 ±100 → 灵敏度换算 (delta*sens)/512 → 步长限幅 ±8
  *   - SW 按键边沿检测：按下发 EV_KEY_DOWN，松开发 EV_KEY_UP
  *   - K0（PE4）设备开关：软件消抖（连续 2 次一致）+ 按下边沿 → EV_DEV_TOGGLE
+ *   - K1（PE3）返回键：同样消抖，按下边沿 → EV_BACK（永远可扫，不受设备开关影响）
  *   - 设备开关 g_js_on：默认 OFF；OFF 时摇杆与 SW 事件全部停发
  *     （"设备未连接"：光标不动、按键无效，K0 本身永远可扫——开关不依赖设备）
  */
@@ -54,6 +55,9 @@ uint8_t joystick_scan(input_event_t *ev)
     static uint8_t k0_lvl = 1;    /* K0 上次采样电平（1=释放，KEY0 低有效） */
     static uint8_t k0_cnt = 0;    /* K0 连续一致计数 */
     static uint8_t k0_prev = 1;   /* K0 上次稳定电平 */
+    static uint8_t k1_lvl = 1;    /* K1（返回键）同样消抖变量，模式与 K0 完全一致 */
+    static uint8_t k1_cnt = 0;
+    static uint8_t k1_prev = 1;
     static uint8_t sw_prev = 1;   /* SW 上次状态（1=释放） */
 
     /* --- K0 设备开关：永远扫描（OFF 时开关本身必须可用） --- */
@@ -74,6 +78,24 @@ uint8_t joystick_scan(input_event_t *ev)
         return 1;
     }
     if (k0_cnt >= K0_SHAKE_CNT && k0_lvl == 1 && k0_prev == 0) k0_prev = 1;
+
+    /* --- K1 返回键：与 K0 一样永远可扫（板载按键，不依赖摇杆设备）。
+     *     按下边沿 → EV_BACK（导航键：应用→桌面→锁屏逐级回退） --- */
+    lvl = (HAL_GPIO_ReadPin(KEY1_GPIO_Port, KEY1_Pin) == GPIO_PIN_RESET) ? 0 : 1;
+    if (lvl == k1_lvl) {
+        if (k1_cnt < 0xFF) k1_cnt++;
+    } else {
+        k1_cnt = 0;
+        k1_lvl = lvl;
+    }
+    if (k1_cnt >= K0_SHAKE_CNT && k1_lvl == 0 && k1_prev == 1) {
+        k1_prev = 0;
+        ev->type = EV_BACK;
+        ev->dx = 0;
+        ev->dy = 0;
+        return 1;
+    }
+    if (k1_cnt >= K0_SHAKE_CNT && k1_lvl == 1 && k1_prev == 0) k1_prev = 1;
 
     /* --- 设备关闭：摇杆与 SW 全部停发（"设备未连接"：光标不动、按键无效） --- */
     if (!g_js_on) return 0;

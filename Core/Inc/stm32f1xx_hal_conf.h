@@ -57,7 +57,7 @@
 /*#define HAL_HCD_MODULE_ENABLED   */
 /*#define HAL_PWR_MODULE_ENABLED   */
 /*#define HAL_RCC_MODULE_ENABLED   */
-#define HAL_RTC_MODULE_ENABLED   /* 手动启用：RTC 时间源（rtc_app.c），CubeMX 未开 RTC 中间件 */
+#define HAL_RTC_MODULE_ENABLED   /* ?????RTC ??? */
 /*#define HAL_SD_MODULE_ENABLED   */
 /*#define HAL_MMC_MODULE_ENABLED   */
 /*#define HAL_SDRAM_MODULE_ENABLED   */
