@@ -56,11 +56,12 @@
 #define configSUPPORT_DYNAMIC_ALLOCATION         1
 #define configUSE_IDLE_HOOK                      0
 #define configUSE_TICK_HOOK                      0
+#define configUSE_MALLOC_FAILED_HOOK             1   /* heap_4 OOM -> vApplicationMallocFailedHook() (freeze = visible signal) */
 #define configCPU_CLOCK_HZ                       ( SystemCoreClock )
 #define configTICK_RATE_HZ                       ((TickType_t)1000)
 #define configMAX_PRIORITIES                     ( 56 )
 #define configMINIMAL_STACK_SIZE                 ((uint16_t)128)
-#define configTOTAL_HEAP_SIZE                    ((size_t)3072)
+#define configTOTAL_HEAP_SIZE                    ((size_t)8192)  /* 3072 was too tight: uiTask 2KB stack + 5 tasks + queue overflowed it, uiTask silently failed to start */
 #define configMAX_TASK_NAME_LEN                  ( 16 )
 #define configUSE_TRACE_FACILITY                 1
 #define configUSE_16_BIT_TICKS                   0

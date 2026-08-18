@@ -155,6 +155,14 @@ void StartDefaultTask(void *argument)
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
 
+/* Heap-exhaustion watchdog: heap_4 calls this when any RTOS allocation fails.
+   Freeze here so a dead allocation is VISIBLE (LED stops blinking) instead of
+   a silently missing task (2026-08-18: uiTask failed to start, screen black). */
+void vApplicationMallocFailedHook(void)
+{
+    for (;;) { }
+}
+
 /* 1s tick timer callback: producer of EV_TICK, must not block.
    UI task is the only consumer - single-writer rendering stays intact. */
 static void tick_timer_cb(void *argument)

@@ -855,27 +855,27 @@
               <FileType>1</FileType>
               <FilePath>../App/Src/sys_stats.c</FilePath>
             </File>
-                  <File>
-          <FileName>app_files.c</FileName>
-          <FileType>1</FileType>
-          <FilePath>../App/Src/app_files.c</FilePath>
-        </File>
-        <File>
-          <FileName>w25q128.c</FileName>
-          <FileType>1</FileType>
-          <FilePath>../App/Src/w25q128.c</FilePath>
-        </File>
-        <File>
-          <FileName>ff.c</FileName>
-          <FileType>1</FileType>
-          <FilePath>../App/FatFs/ff.c</FilePath>
-        </File>
-        <File>
-          <FileName>diskio.c</FileName>
-          <FileType>1</FileType>
-          <FilePath>../App/FatFs/diskio.c</FilePath>
-        </File>
-</Files>
+            <File>
+              <FileName>app_files.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/app_files.c</FilePath>
+            </File>
+            <File>
+              <FileName>w25q128.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/w25q128.c</FilePath>
+            </File>
+            <File>
+              <FileName>ff.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/FatFs/ff.c</FilePath>
+            </File>
+            <File>
+              <FileName>diskio.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/FatFs/diskio.c</FilePath>
+            </File>
+          </Files>
         </Group>
         <Group>
           <GroupName>Drivers/CMSIS</GroupName>

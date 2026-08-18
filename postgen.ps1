@@ -219,6 +219,32 @@ if (Test-Path $fr) {
 }
 
 # ---------------------------------------------------------------
+# 4. FreeRTOSConfig.h：堆扩容 + malloc 失败钩子
+#    CubeMX 每次生成都会把堆还原成 3072——装不下 5 个任务 + uiTask 2KB 栈，
+#    曾导致 uiTask 创建失败 → 任务没起来 → 屏幕全黑（2026-08-18 bug 根因）。
+#    钩子打开后若堆耗尽会停在 for(;;)，LED 停闪 = 分配失败信号，不再静默。
+# ---------------------------------------------------------------
+$fc = Join-Path $root "Core\Inc\FreeRTOSConfig.h"
+if (Test-Path $fc) {
+    $txt = [IO.File]::ReadAllText($fc, [Text.Encoding]::ASCII)
+    $orig = $txt
+    $txt = $txt.Replace("#define configTOTAL_HEAP_SIZE                    ((size_t)3072)",
+                        "#define configTOTAL_HEAP_SIZE                    ((size_t)8192)")
+    if (-not $txt.Contains("configUSE_MALLOC_FAILED_HOOK")) {
+        $txt = $txt.Replace("#define configUSE_TICK_HOOK                      0",
+                            "#define configUSE_TICK_HOOK                      0`r`n#define configUSE_MALLOC_FAILED_HOOK             1")
+    }
+    if ($txt -ne $orig) {
+        [IO.File]::WriteAllText($fc, $txt, [Text.Encoding]::ASCII)
+        $msg += "[FreeRTOSConfig.h] 已修复堆大小(8192) + malloc 失败钩子"
+    } else {
+        $msg += "[FreeRTOSConfig.h] 已是修复状态，跳过"
+    }
+} else {
+    $msg += "[FreeRTOSConfig.h] 文件不存在！"
+}
+
+# ---------------------------------------------------------------
 $msg | ForEach-Object { Write-Host $_ }
 Write-Host ""
 Write-Host "完成。重复运行无副作用。"
