@@ -740,7 +740,12 @@
               <FileType>1</FileType>
               <FilePath>../App/Src/app_monitor.c</FilePath>
             </File>
-          </Files>
+                  <File>
+          <FileName>sys_stats.c</FileName>
+          <FileType>1</FileType>
+          <FilePath>../App/Src/sys_stats.c</FilePath>
+        </File>
+</Files>
         </Group>
         <Group>
           <GroupName>Drivers/CMSIS</GroupName>

@@ -8,6 +8,7 @@
 #include "input_task.h"
 #include "event.h"
 #include "joystick.h"
+#include "sys_stats.h"
 #include "cmsis_os.h"
 
 #define JOY_PERIOD_MS   15     /* 采样周期 */
@@ -20,7 +21,11 @@ void input_task(void *argument)
     {
         if (joystick_scan(&ev))       /* dev 层扫描：位移/SW/K0 任一产生事件 */
         {
-            xQueueSend(g_event_queue, &ev, 0);
+            g_stats_events++;         /* 统计：产生事件 +1 */
+            if (xQueueSend(g_event_queue, &ev, 0) != pdPASS)
+            {
+                g_stats_drops++;      /* 统计：队列满（背压）丢弃 +1 */
+            }
         }
         osDelay(JOY_PERIOD_MS);
     }

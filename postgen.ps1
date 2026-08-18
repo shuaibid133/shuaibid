@@ -46,7 +46,7 @@ if (Test-Path $uv) {
     # 2a. App 组：逐文件检查，缺哪个补哪个（组不存在则整体插入到 Drivers/CMSIS 前）
     #     注意：joystick.c 在 App/Dev/（dev 层），其余在 App/Src/
     $appFiles = @("cursor.c", "app_config.c", "input_task.c", "ui_task.c", "desktop.c", "rtc_app.c",
-                  "app.c", "app_monitor.c", "joystick.c")
+                  "app.c", "app_monitor.c", "sys_stats.c", "joystick.c")
     $missing = @()
     foreach ($f in $appFiles) {
         if (-not $txt.Contains("<FileName>$f</FileName>")) { $missing += $f }
@@ -115,6 +115,11 @@ if (Test-Path $uv) {
               <FileName>app_monitor.c</FileName>
               <FileType>1</FileType>
               <FilePath>../App/Src/app_monitor.c</FilePath>
+            </File>
+            <File>
+              <FileName>sys_stats.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Src/sys_stats.c</FilePath>
             </File>
             <File>
               <FileName>joystick.c</FileName>

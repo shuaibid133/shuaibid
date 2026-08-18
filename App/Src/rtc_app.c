@@ -11,6 +11,7 @@
  *   - LSE 起振失败降级 LSI（内部 RC，精度差但时间能走，演示可接受）
  */
 #include "rtc_app.h"
+#include "sys_stats.h"
 #include "main.h"
 #include "stm32f1xx_hal_rtc.h"   /* HAL RTC：CubeMX 未开 RTC 中间件，手动包含 */
 
@@ -47,6 +48,7 @@ void rtc_app_init(void)
         osc.LSIState = RCC_LSI_ON;
         HAL_RCC_OscConfig(&osc);
         pclk.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;  /* 内部 RC，秒会偏 */
+        g_stats_errors++;   /* 统计：LSE 起振失败降级 LSI = 系统级错误 */
     }
 
     /* 3. 选择 RTC 时钟源 */

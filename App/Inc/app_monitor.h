@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file    app_monitor.h
  * @brief   System Monitor 应用接口（注册表 g_apps 中通过这两个函数挂载）
  */
