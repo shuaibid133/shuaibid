@@ -67,6 +67,8 @@ void Error_Handler(void);
 #define VRY_GPIO_Port GPIOA
 #define JOY_SW_Pin GPIO_PIN_6
 #define JOY_SW_GPIO_Port GPIOA
+#define W25Q_CS_Pin GPIO_PIN_12
+#define W25Q_CS_GPIO_Port GPIOB
 #define LED_Pin GPIO_PIN_5
 #define LED_GPIO_Port GPIOB
 

@@ -14,4 +14,16 @@ void rtc_app_init(void);
 /* 读当前时分（24 小时制） */
 void rtc_app_get_time(uint8_t *hour, uint8_t *min);
 
+/* 完整日期时间（FATFS 文件时间戳等用途） */
+typedef struct {
+    uint16_t year;    /* 4 位年份，如 2026 */
+    uint8_t  month;   /* 1-12 */
+    uint8_t  day;     /* 1-31 */
+    uint8_t  hour;    /* 0-23 */
+    uint8_t  min;
+    uint8_t  sec;
+} rtc_datetime_t;
+
+void rtc_app_get_datetime(rtc_datetime_t *dt);
+
 #endif

@@ -12,6 +12,7 @@
  */
 #include "app.h"
 #include "app_monitor.h"
+#include "app_files.h"
 #include "cursor.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 
@@ -39,7 +40,7 @@ static void app_stub_open(void)
 /* ---------- 应用注册表 ----------
  * 颜色：图标色块（RGB565）；桌面图标/hover 遍历此表绘制 */
 const app_t g_apps[] = {
-    {"Files",    ATK_MD0280_BLUE,     app_stub_open,    app_stub_handle},
+    {"Files",    ATK_MD0280_BLUE,     app_files_open,   app_files_handle},
     {"Paint",    ATK_MD0280_GREEN,    app_stub_open,    app_stub_handle},
     {"Music",    ATK_MD0280_MAGENTA,  app_stub_open,    app_stub_handle},
     {"Settings", ATK_MD0280_YELLOW,   app_stub_open,    app_stub_handle},

@@ -88,3 +88,18 @@ void rtc_app_get_time(uint8_t *hour, uint8_t *min)
     *hour = t.Hours;
     *min  = t.Minutes;
 }
+
+void rtc_app_get_datetime(rtc_datetime_t *dt)
+{
+    RTC_TimeTypeDef t;
+    RTC_DateTypeDef d;
+
+    HAL_RTC_GetTime(&g_hrtc, &t, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&g_hrtc, &d, RTC_FORMAT_BIN);   /* shadow 解锁（HAL 要求） */
+    dt->year  = 2000 + d.Year;   /* F1 HAL 日期里只有 2 位年份 */
+    dt->month = d.Month;
+    dt->day   = d.Date;
+    dt->hour  = t.Hours;
+    dt->min   = t.Minutes;
+    dt->sec   = t.Seconds;
+}

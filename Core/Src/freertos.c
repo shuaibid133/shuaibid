@@ -61,7 +61,9 @@ const osThreadAttr_t inputTask_attributes = {
 };
 const osThreadAttr_t uiTask_attributes = {
   .name = "uiTask",
-  .stack_size = 256 * 4,
+  /* 512 words x 4B = 2KB: FATFS calls (f_open/f_readdir/f_mkfs) run in this
+     task's stack; 1KB left too little headroom */
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* USER CODE END Variables */

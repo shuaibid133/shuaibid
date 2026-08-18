@@ -44,21 +44,38 @@ if (Test-Path $uv) {
     $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
 
     # 2a. App 组：逐文件检查，缺哪个补哪个（组不存在则整体插入到 Drivers/CMSIS 前）
-    #     注意：joystick.c 在 App/Dev/（dev 层），其余在 App/Src/
-    $appFiles = @("cursor.c", "app_config.c", "input_task.c", "ui_task.c", "desktop.c", "rtc_app.c",
-                  "app.c", "app_monitor.c", "sys_stats.c", "joystick.c")
+    #     目录：joystick.c 在 App/Dev/（dev 层），FATFS 库在 App/FatFs/，其余在 App/Src/
+    $appFiles = @(
+        @{ n = "cursor.c";      d = "Src" },
+        @{ n = "app_config.c";  d = "Src" },
+        @{ n = "input_task.c";  d = "Src" },
+        @{ n = "ui_task.c";     d = "Src" },
+        @{ n = "desktop.c";     d = "Src" },
+        @{ n = "rtc_app.c";     d = "Src" },
+        @{ n = "app.c";         d = "Src" },
+        @{ n = "app_monitor.c"; d = "Src" },
+        @{ n = "app_files.c";   d = "Src" },
+        @{ n = "sys_stats.c";   d = "Src" },
+        @{ n = "w25q128.c";     d = "Src" },
+        @{ n = "joystick.c";    d = "Dev" },
+        @{ n = "ff.c";          d = "FatFs" },
+        @{ n = "diskio.c";      d = "FatFs" }
+    )
+    # 按文件列表生成一组 <File> 条目（列表为 @{n=文件名; d=子目录}）
+    function Get-FileItems($list) {
+        ($list | ForEach-Object {
+            "        <File>`r`n          <FileName>$($_.n)</FileName>`r`n          <FileType>1</FileType>`r`n          <FilePath>../App/$($_.d)/$($_.n)</FilePath>`r`n        </File>"
+        }) -join "`r`n"
+    }
     $missing = @()
     foreach ($f in $appFiles) {
-        if (-not $txt.Contains("<FileName>$f</FileName>")) { $missing += $f }
+        if (-not $txt.Contains("<FileName>$($f.n)</FileName>")) { $missing += $f }
     }
     if ($missing.Count -eq 0) {
         $msg += "[uvprojx] App 组文件齐全，跳过"
     } elseif ($txt.Contains("<GroupName>App</GroupName>")) {
         # 组存在：把缺失文件插到组内第一个 </Files> 之前
-        $items = ($missing | ForEach-Object {
-            $dir = if ($_ -eq "joystick.c") { "Dev" } else { "Src" }
-            "        <File>`r`n          <FileName>$_</FileName>`r`n          <FileType>1</FileType>`r`n          <FilePath>../App/$dir/$_</FilePath>`r`n        </File>"
-        }) -join "`r`n"
+        $items = Get-FileItems $missing
         # 定位 App 组内的 </Files>（不能用第一个：新 CubeMX 模板最前是 Application/MDK-ARM 组）
         $gi = $txt.IndexOf("<GroupName>App</GroupName>")
         $anchor = "</Files>"
@@ -66,69 +83,15 @@ if (Test-Path $uv) {
         if ($idx -ge 0) {
             $newTxt = $txt.Substring(0, $idx) + $items + "`r`n" + $anchor + $txt.Substring($idx + $anchor.Length)
             [IO.File]::WriteAllText($uv, $newTxt, [Text.Encoding]::UTF8)
-            $msg += "[uvprojx] App 组补齐: " + ($missing -join ", ")
+            $msg += "[uvprojx] App 组补齐: " + (($missing | ForEach-Object { $_.n }) -join ", ")
         } else {
             $msg += "[uvprojx] 未找到 </Files>！请手动检查"
         }
     } else {
-        # 组不存在：整体插入
-        $appGroup = @"
-        <Group>
-          <GroupName>App</GroupName>
-          <Files>
-            <File>
-              <FileName>cursor.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/cursor.c</FilePath>
-            </File>
-            <File>
-              <FileName>app_config.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/app_config.c</FilePath>
-            </File>
-            <File>
-              <FileName>input_task.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/input_task.c</FilePath>
-            </File>
-            <File>
-              <FileName>ui_task.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/ui_task.c</FilePath>
-            </File>
-            <File>
-              <FileName>desktop.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/desktop.c</FilePath>
-            </File>
-            <File>
-              <FileName>rtc_app.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/rtc_app.c</FilePath>
-            </File>
-            <File>
-              <FileName>app.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/app.c</FilePath>
-            </File>
-            <File>
-              <FileName>app_monitor.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/app_monitor.c</FilePath>
-            </File>
-            <File>
-              <FileName>sys_stats.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Src/sys_stats.c</FilePath>
-            </File>
-            <File>
-              <FileName>joystick.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../App/Dev/joystick.c</FilePath>
-            </File>
-          </Files>
-        </Group>
-"@
+        # 组不存在：整体插入（文件列表与增量分支共用 Get-FileItems）
+        $appGroup = "        <Group>`r`n          <GroupName>App</GroupName>`r`n          <Files>`r`n" +
+                    (Get-FileItems $appFiles) +
+                    "`r`n          </Files>`r`n        </Group>"
         $anchor = "        <Group>`r`n          <GroupName>Drivers/CMSIS</GroupName>"
         $newTxt = $txt.Replace($anchor, $appGroup + "`r`n" + $anchor)
         if ($newTxt -eq $txt) {
@@ -155,6 +118,20 @@ if (Test-Path $uv) {
             $msg += "[uvprojx] 包含路径已加 ../App/Inc"
         } else {
             $msg += "[uvprojx] 未找到 ../Drivers; 包含路径！"
+        }
+    }
+    $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
+    # 注意：不能只查 "../App/FatFs"——组里的 <FilePath>../App/FatFs/ff.c</FilePath>
+    # 也会匹配（2026-08-18 误判坑），必须带分号只认 IncludePath 条目
+    if ($txt.Contains("../App/FatFs;")) {
+        $msg += "[uvprojx] 包含路径已含 ../App/FatFs;，跳过"
+    } else {
+        $newTxt = $txt.Replace("../App/Inc;", "../App/Inc;../App/FatFs;")
+        if ($newTxt -ne $txt) {
+            [IO.File]::WriteAllText($uv, $newTxt, [Text.Encoding]::UTF8)
+            $msg += "[uvprojx] 包含路径已加 ../App/FatFs;"
+        } else {
+            $msg += "[uvprojx] 未找到 ../App/Inc; 包含路径！"
         }
     }
     $txt = [IO.File]::ReadAllText($uv, [Text.Encoding]::UTF8)
