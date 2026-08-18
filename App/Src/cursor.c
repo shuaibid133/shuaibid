@@ -170,8 +170,16 @@ uint8_t cursor_overlap(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 void cursor_move(int8_t dx, int8_t dy)
 {
     uint8_t s = cursor_size();
-    int16_t nx = (int16_t)g_cursor.x + dx;
-    int16_t ny = (int16_t)g_cursor.y + dy;
+    int16_t nx, ny;
+
+    /* 光标不可见（应用打开时隐藏、Monitor 纯显示不启用光标）：
+     * 移动必须忽略——此时背景缓冲里存的还是隐藏前的旧界面（桌面），
+     * restore 会把桌面内容（图标色块）写回新界面形成方块残影。
+     * 坐标也不更新：应用若需要光标会自己 cursor_init 定位 */
+    if (!g_visible) return;
+
+    nx = (int16_t)g_cursor.x + dx;
+    ny = (int16_t)g_cursor.y + dy;
     /* 钳制基于箭头外框（宽 18s、高 20s，含白描边），保证整个箭头不出屏 */
     uint16_t max_x = ATK_MD0280_LCD_WIDTH - 1 - 17 * s;
     uint16_t max_y = ATK_MD0280_LCD_HEIGHT - 1 - 19 * s;
