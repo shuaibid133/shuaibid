@@ -149,21 +149,30 @@ static void create_demo(void)
     }
 }
 
-/* 挂载（首次进入调用一次）：未格式化自动 f_mkfs + 建演示文件 */
+/* 挂载（首次进入调用一次）：未格式化自动 f_mkfs + 建演示文件
+ * 进度提示：首次进入格式化要 3~10 秒（4K 擦除逐块进行），期间界面
+ * 没有内容也没有光标——看起来像死机。这里在屏幕中部逐阶段显示进度。 */
 static void fs_init(void)
 {
     FRESULT fr;
 
     if (g_fs_ready || g_fs_err) return;
+
+    atk_md0280_show_string(8, 120, 200, 16, (char *)"Flash init...",
+                           ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
     if (disk_initialize(0) != 0) {       /* Flash 读 ID 失败（没焊/坏片） */
         g_fs_err = 1;
         g_stats_errors++;
         return;
     }
 
+    atk_md0280_show_string(8, 120, 200, 16, (char *)"Mounting...",
+                           ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
     fr = f_mount(&g_fs, "0:", 1);
     if (fr == FR_NO_FILESYSTEM) {        /* 新片：建卷 + 演示文件 */
         MKFS_PARM mpar = {FM_FAT, 0, 0, 0, 0};
+        atk_md0280_show_string(8, 120, 200, 16, (char *)"Formatting flash...",
+                               ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
         fr = f_mkfs("0:", &mpar, s_work, sizeof(s_work));
         if (fr == FR_OK) {
             f_mount(NULL, "0:", 0);      /* 重新挂载新卷 */

@@ -111,8 +111,10 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* event queue: capacity 8, input task produces, UI task consumes */
-  g_event_queue = xQueueCreate(8, sizeof(input_event_t));
+  /* event queue: capacity 16, input task produces, UI task consumes.
+     Sized generously: while Files formats the flash (a few seconds of UI
+     stall) K1-press events must survive, not get dropped behind EV_TICKs. */
+  g_event_queue = xQueueCreate(16, sizeof(input_event_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
