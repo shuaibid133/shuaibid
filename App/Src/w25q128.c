@@ -33,31 +33,37 @@
 #define W25Q_SR1_WIP      0x01
 
 /* 引脚位带定义（GPIOB 寄存器直写，不经过 HAL）：
- * CS=PB12 SCK=PB13 MISO=PB14 MOSI=PB15 */
+ * CS=PB12 SCK=PB13 MISO=PB14 MOSI=PB15
+ * 寄存器偏移：CRL 0x00 CRH 0x04 IDR 0x08 ODR 0x0C BSRR 0x10
+ * 2026-08-19 修正：IDR 曾错写成 0x40010C10（那是只写寄存器 BSRR，
+ * 读恒 0）→ MISO 采样恒 0 → 读 ID 恒 0x00000000（开发日志有记录） */
 #define BB_GPIOB_ODR      (*(volatile uint32_t *)0x40010C0Cu)
-#define BB_GPIOB_IDR      (*(volatile uint32_t *)0x40010C10u)
+#define BB_GPIOB_IDR      (*(volatile uint32_t *)0x40010C08u)
 #define BB_GPIOB_CRH      (*(volatile uint32_t *)0x40010C04u)
 #define BB_CS_PIN   (1u << 12)
 #define BB_SCK_PIN  (1u << 13)
 #define BB_MISO_PIN (1u << 14)
 #define BB_MOSI_PIN (1u << 15)
 
-/* 位延时：主频 72MHz 下约 8 个周期 ≈ 0.1us → 位周期约 1us（~1MHz SCK，
- * W25Q128 读速率上限 50MHz，余量充足） */
+/* 位延时：主频 72MHz 下约 70 个周期 ≈ 1us → 位周期约 4us（~250kHz SCK）。
+ * 2026-08-19：从 0.1us 放到 1us——2MHz 弱驱动模式下 SCK 边沿畸变，
+ * 采样点落在临界区导致读 ID 前两字节错乱（后一字节恰好收敛对齐）；
+ * 放慢 10 倍 + 50MHz 强驱动后边沿干净，采样余量充足 */
 static void bb_delay(void)
 {
     uint8_t i;
-    for (i = 0; i < 6; i++) { __NOP(); }
+    for (i = 0; i < 60; i++) { __NOP(); }
 }
 
 /* 把 PB13/14/15 从 SPI2 复用改为 GPIO（CRH 直接写）：
- * 13/15 = 推挽输出 2MHz（CNF=00 MODE=10），14 = 上拉输入（CNF=10 MODE=00） */
+ * 13/15 = 推挽输出 50MHz（CNF=00 MODE=11，强驱动快边沿），
+ * 14 = 上拉输入（CNF=10 MODE=00） */
 static void bb_pin_setup(void)
 {
     BB_GPIOB_CRH = (BB_GPIOB_CRH & ~(0xFFFFu << 20))   /* 清 PB13-15 四位的配置 */
-                 | (0x2u << 20)   /* PB13 输出 */
+                 | (0x3u << 20)   /* PB13 输出 50MHz */
                  | (0x8u << 24)   /* PB14 输入（CNF=10 上拉/下拉，MODE=00） */
-                 | (0x2u << 28);  /* PB15 输出 */
+                 | (0x3u << 28);  /* PB15 输出 50MHz */
     /* 输入上拉（CNF=10 时 ODR 决定上/下拉）：MISO 空闲高 */
     BB_GPIOB_ODR |= BB_MISO_PIN;
 }
@@ -132,11 +138,22 @@ uint32_t w25q128_read_id(void)
     return id;
 }
 
+/* 克隆芯片兼容：本板实测 0x9F 响应 00522118（厂商/类型字节非原厂 EF/40，
+ * 容量字节 0x18 与 W25Q128 一致，读写时序正常）——克隆片 JEDEC ID 不保证
+ * 等于原厂值，只校验容量字节（0x18 = 128Mbit）。0xFFFFFF = MISO 恒高
+ * （CS 未生效/通路断），0x000000 = 采样恒 0（引脚配置错），都过不了检查 */
+static uint8_t id_plausible(uint32_t id)
+{
+    return ((id >> 16) & 0xFFu) != 0xFFu
+        && ((id >> 16) & 0xFFu) != 0x00u
+        && (id & 0xFFu) == (W25Q_ID_W25Q128 & 0xFFu);
+}
+
 uint8_t w25q128_init(void)
 {
     bb_pin_setup();                          /* PB13-15: SPI2 复用 → 普通 GPIO */
     bb_cs_high();                            /* CS 空闲高 */
-    return (w25q128_read_id() == W25Q_ID_W25Q128) ? 1 : 0;
+    return id_plausible(w25q128_read_id()) ? 1 : 0;
 }
 
 /* 连续读：0x03 命令不限制页边界，可一次读完任意长度 */

@@ -265,7 +265,7 @@ static uint8_t hit_icon(uint16_t x, uint16_t y)
 
 /* ---------- 界面 ---------- */
 
-/* BOOT：蓝底 + 项目名 */
+/* BOOT：蓝底 + 项目名 + 构建版本（区分固件版本用，调试期保留） */
 static void draw_boot(void)
 {
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_BLUE);
@@ -273,6 +273,8 @@ static void draw_boot(void)
                            ATK_MD0280_LCD_FONT_32, ATK_MD0280_WHITE);
     atk_md0280_show_string(80, 168, 120, 16, (char *)"Starting...",
                            ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
+    atk_md0280_show_string(80, 200, 160, 12, (char *)"BUILD 0819 (SilentM)",
+                           ATK_MD0280_LCD_FONT_12, ATK_MD0280_WHITE);
 }
 
 /* 进入登录界面：清屏 → 标题 → 密码框 → 键盘 → 光标定位数字 5 */
