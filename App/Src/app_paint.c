@@ -148,12 +148,16 @@ static uint16_t next_img_no(void)
 }
 
 /* 保存：自动编号新文件 IMGxxx.IMG，读 GRAM 逐行写（小端 RGB565）。
- * 编号扫描在 FATFS 目录缓存上做（几十项），耗时 <1ms 可忽略 */
+ * 编号扫描在 FATFS 目录缓存上做（几十项），耗时 <1ms 可忽略
+ * 返回：1=成功 2=画布全白（已删除半成品，界面显示 EMP） 0=失败
+ * 全白检测：没进入 DRW 模式"画"（只有光标移动）或误按 CLR 后保存，
+ * 画布 GRAM 是空的——与其存一张白纸，不如提示用户 */
 static uint8_t paint_save(void)
 {
     FIL f;
     UINT bw;
     uint16_t x, y, no;
+    uint32_t ink = 0;                  /* 非白像素计数 */
     uint8_t ok = 1;
     uint8_t hdr[3] = { 'K', 'P', '1' };
     char path[16];
@@ -173,12 +177,18 @@ static uint8_t paint_save(void)
         for (y = CANVAS_Y0; ok && y <= CANVAS_Y1; y++) {
             for (x = 0; x < SCR_W; x++) {
                 uint16_t c = atk_md0280_read_point(x, y);
+
+                if (c != ATK_MD0280_WHITE) ink++;
                 s_line[x * 2] = (uint8_t)(c & 0xFF);
                 s_line[x * 2 + 1] = (uint8_t)(c >> 8);
             }
             if (f_write(&f, s_line, SCR_W * 2, &bw) != FR_OK || bw != SCR_W * 2) ok = 0;
         }
         f_close(&f);
+        if (ok && ink == 0) {
+            f_unlink(path);              /* 整幅白纸：删掉半成品，不留垃圾文件 */
+            ok = 2;
+        }
     } else {
         ok = 0;   /* 编号已占用或卷满：自动编号冲突理论不存在（刚扫过），
                    * 卷满则 FS 报错，用户需在 Files 删旧图 */
@@ -336,13 +346,18 @@ void app_paint_handle(input_event_t *ev)
             } else if (btn == 6) {
                 paint_clear();
             } else if (btn == 7) {
+                uint8_t r;
+
                 /* 先显示 SAV 再保存：保存约 0.6s（W25Q 页编程物理时间 +
-                 * 位带 SPI 读写），无反馈的死等体验差；结束后换 OK!/ERR */
+                 * 位带 SPI 读写），无反馈的死等体验差；结束后按结果换
+                 * OK!/EMP/ERR（EMP = 画布全白，白纸不落盘） */
                 s_status = "SAV";
                 s_status_sec = 2;
                 toolbar_redraw();
-                if (paint_save()) { s_status = "OK!"; s_status_sec = 2; }
-                else              { s_status = "ERR"; s_status_sec = 2; }
+                r = paint_save();
+                if (r == 1)      { s_status = "OK!"; s_status_sec = 2; }
+                else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
+                else             { s_status = "ERR"; s_status_sec = 2; }
                 toolbar_redraw();
             }
         }
