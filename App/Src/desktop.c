@@ -640,6 +640,7 @@ void desktop_handle_event(input_event_t *ev)
              * EV_BACK 是系统级导航事件：框架直接接管（返回桌面），
              * 不发给应用——否则应用忽略它就会"按 K1 退不出来" */
             if (ev->type == EV_BACK) {
+                if (s_cur_app->close != NULL) s_cur_app->close();  /* 退出钩子 */
                 enter_desktop();        /* 内部置 s_cur_app = NULL 并重绘桌面 */
                 break;
             }

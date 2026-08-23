@@ -12,6 +12,7 @@
 #include "rtc_app.h"
 #include "sys_cfg.h"
 #include "sys_backlight.h"
+#include "app_music.h"
 #include "app_config.h"
 
 void ui_task(void *argument)
@@ -27,6 +28,9 @@ void ui_task(void *argument)
                                         * 即使配置读取异常，屏幕也可见（好诊断） */
         sys_cfg_load();                /* Flash → g_sys_cfg：灵敏度/亮度等在登录前生效 */
         sys_backlight_set(g_sys_cfg.brightness);   /* 应用配置的亮度 */
+        app_music_pin_idle();          /* Music 蜂鸣器空闲静音：PA1 推挽输出高。
+                                        * 开机即拉高，进 Music 前不依赖任何应用
+                                        * 初始化，杜绝"打开应用前引脚悬空/被拉低" */
         desktop_init();                /* BOOT 2秒 → LOGIN，内部完成光标接管 */
     }
 

@@ -895,6 +895,11 @@
               <FileType>1</FileType>
               <FilePath>..\App\Src\sys_cfg.c</FilePath>
             </File>
+            <File>
+              <FileName>app_music.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_music.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

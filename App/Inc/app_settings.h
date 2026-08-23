@@ -9,5 +9,6 @@
 
 void app_settings_open(void);
 void app_settings_handle(input_event_t *ev);
+void app_settings_close(void);
 
 #endif

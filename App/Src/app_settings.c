@@ -250,3 +250,10 @@ void app_settings_handle(input_event_t *ev)
         /* 光标没在按钮上：SW 无效，避免误触（值不能被盲调） */
     }
 }
+
+/* 退出钩子：K1 返回桌面时框架调用——未落盘的修改立即保存
+ * （否则"调完 2 秒内退出"时 EV_TICK 不再来，修改丢失） */
+void app_settings_close(void)
+{
+    if (s_dirty) { sys_cfg_save(); s_dirty = 0; }
+}

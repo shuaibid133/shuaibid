@@ -22,6 +22,8 @@ typedef struct {
     uint16_t    color;                  /* 图标色块颜色（RGB565） */
     void (*open)(void);                 /* 进入应用：全屏自绘（进入时光标已隐藏） */
     void (*handle)(input_event_t *ev);  /* 应用内事件分发（框架只转发不解析） */
+    void (*close)(void);                /* 退出钩子：EV_BACK 返回桌面时框架调用
+                                         * （保存脏数据/停硬件；可为 NULL） */
 } app_t;
 
 extern const app_t g_apps[];            /* 应用注册表 */

@@ -51,7 +51,8 @@
 #define BTN_DEL_X   (BTN_NEW_X + BTN_W + 6)   /* [Del] 按钮矩形 */
 
 /* ---------- 文件系统状态 ---------- */
-static FATFS g_fs;
+FATFS g_fs;   /* 全局共享挂载对象（app_files.h 声明 extern）：Files/Paint 共用，
+               * FATFS 同一卷同一时刻只能有一个对象挂载 */
 static uint8_t g_fs_ready = 0;
 static uint8_t g_fs_err = 0;         /* 0=正常 1=初始化失败 2=格式化失败 3=读写自检失败 */
 static uint32_t g_rw_bad = 0;        /* 自检首个错误字节地址（err==3 时显示） */

@@ -14,6 +14,8 @@
 #include "app_monitor.h"
 #include "app_files.h"
 #include "app_settings.h"
+#include "app_music.h"
+#include "app_paint.h"
 #include "cursor.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 
@@ -39,14 +41,15 @@ static void app_stub_open(void)
 }
 
 /* ---------- 应用注册表 ----------
- * 颜色：图标色块（RGB565）；桌面图标/hover 遍历此表绘制 */
+ * 颜色：图标色块（RGB565）；桌面图标/hover 遍历此表绘制
+ * close：退出钩子（K1 返回时框架调用），无退出清理的填 NULL */
 const app_t g_apps[] = {
-    {"Files",    ATK_MD0280_BLUE,     app_files_open,   app_files_handle},
-    {"Paint",    ATK_MD0280_GREEN,    app_stub_open,    app_stub_handle},
-    {"Music",    ATK_MD0280_MAGENTA,  app_stub_open,    app_stub_handle},
-    {"Settings", ATK_MD0280_YELLOW,   app_settings_open, app_settings_handle},
-    {"Logs",     ATK_MD0280_CYAN,     app_stub_open,    app_stub_handle},
-    {"Monitor",  ATK_MD0280_GRAY,     app_monitor_open, app_monitor_handle},
+    {"Files",    ATK_MD0280_BLUE,     app_files_open,    app_files_handle,    NULL},
+    {"Paint",    ATK_MD0280_GREEN,    app_paint_open,    app_paint_handle,    NULL},
+    {"Music",    ATK_MD0280_MAGENTA,  app_music_open,    app_music_handle,    app_music_close},
+    {"Settings", ATK_MD0280_YELLOW,   app_settings_open, app_settings_handle, app_settings_close},
+    {"Logs",     ATK_MD0280_CYAN,     app_stub_open,     app_stub_handle,     NULL},
+    {"Monitor",  ATK_MD0280_GRAY,     app_monitor_open,  app_monitor_handle,  NULL},
 };
 
 const uint8_t g_app_count = sizeof(g_apps) / sizeof(g_apps[0]);
