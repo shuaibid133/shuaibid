@@ -608,15 +608,16 @@ static void open_file(void)
     }
 }
 
-/* 图片视图重绘：PAINT.IMG（"KP1" magic + RGB565 像素流，240×220）
- * 逐行读回写屏。二进制像素文件用文本视图只会看到乱码（"KP1"+不可打印
- * 字节），识别 magic 后按图像渲染。整文件重读 ~1s，查看本身是静态操作
- * （与 Paint 保存同款逐点写屏，尺寸固定无需文件内宽高） */
+/* 图片视图重绘：IMG*.IMG（"KP1" magic + RGB565 像素流，240×220）
+ * 逐行读回、整行批量写屏（atk_md0280_write_area：窗口设置一次 + 连续写
+ * 像素，全图 ~10ms 显示完，无逐行刷新感——这正是"打开图片直接显示"
+ * 的关键）。二进制像素文件用文本视图只会看到乱码（"KP1"+不可打印字节），
+ * 识别 magic 后按图像渲染。尺寸固定无需文件内宽高 */
 static void draw_img_view(void)
 {
     FIL f;
     UINT br;
-    uint16_t x, y;
+    uint16_t y;
     char path[16];
     uint8_t hid;
 
@@ -631,9 +632,10 @@ static void draw_img_view(void)
         if (f_lseek(&f, 3) == FR_OK) {   /* 跳过 magic */
             for (y = 0; y < 220; y++) {
                 if (f_read(&f, g_img_line, 480, &br) != FR_OK || br != 480) break;
-                for (x = 0; x < 240; x++)
-                    atk_md0280_draw_point(x, (uint16_t)(52 + y),
-                        (uint16_t)(g_img_line[x * 2] | (g_img_line[x * 2 + 1] << 8)));
+                /* 小端字节对按 uint16_t 数组直写（ARM 小端，内存布局与
+                 * 文件一致；静态数组天然对齐，M3 硬件支持非对齐读） */
+                atk_md0280_write_area(0, (uint16_t)(52 + y), (uint16_t)(SCR_W - 1),
+                                      (uint16_t)(52 + y), (const uint16_t *)g_img_line);
             }
         }
         f_close(&f);

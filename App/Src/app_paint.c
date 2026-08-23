@@ -8,12 +8,15 @@
  *     按住易松脱/抖动，开关式更稳定
  *   - 颜色：6 色格（黑/红/蓝/绿/黄/白=橡皮），光标点选
  *   - 清空：[CLR] 按钮（画布刷白）
- *   - 保存：[SAVE] 按钮 → 从 LCD 逐行读回像素 → 写 FATFS 文件 0:/PAINT.IMG
- *   - 加载：进入应用时读回文件逐点写屏 → 断电/重启后画面保持
- *   - 预览：Files 应用打开 PAINT.IMG 时识别 "KP1" magic 直接显示图像
+ *   - 保存：[SAVE] → 扫描根目录找最大 IMGxxx.IMG 编号 +1 → 从 LCD 逐行
+ *     读回像素写新文件（自动编号，不覆盖旧图）
+ *   - 画板：每次进入都是空白（未保存的画退出即丢弃，不做自动加载——
+ *     想要保留的画点 SAVE 存成编号文件，之后在 Files 里随时查看）
+ *   - 预览：Files 应用打开 IMG*.IMG 时识别 "KP1" magic 直接显示图像，
+ *     用 atk_md0280_write_area 整行批量写屏（~10ms，无逐行刷新感）
  *     （二进制像素文件用文本查看器只会看到乱码，见 app_files.c draw_img_view）
  *
- * 存储格式（0:/PAINT.IMG）：3 字节 magic "KP1" + 画布像素流
+ * 存储格式（0:/IMGxxx.IMG）：3 字节 magic "KP1" + 画布像素流
  *   （RGB565 小端，240×220，行优先）。无内嵌宽高——画布尺寸固定，
  *   读取时按固定尺寸解析；magic 校验防读入非图片文件。
  *
@@ -118,20 +121,54 @@ static void paint_clear(void)
     atk_md0280_fill(0, CANVAS_Y0, SCR_W - 1, CANVAS_Y1, ATK_MD0280_WHITE);
 }
 
-/* ---------- 保存 / 加载 ---------- */
+/* ---------- 保存 ---------- */
 
-/* 保存：读 GRAM 逐行写文件（小端 RGB565） */
+/* 扫描根目录找最大 IMGxxx.IMG 编号，返回下一个（1..999，999 后回 1） */
+static uint16_t next_img_no(void)
+{
+    DIR dj;
+    FILINFO fi;
+    uint16_t max_no = 0;
+
+    if (f_opendir(&dj, "0:/") != FR_OK) return 1;
+    while (f_readdir(&dj, &fi) == FR_OK && fi.fname[0] != 0) {
+        char *n = fi.fname;   /* 8.3 短名（FATFS 存大写） */
+
+        if (n[0] == 'I' && n[1] == 'M' && n[2] == 'G' &&
+            n[3] >= '0' && n[3] <= '9' && n[4] >= '0' && n[4] <= '9' &&
+            n[5] >= '0' && n[5] <= '9' && n[6] == '.' &&
+            n[7] == 'I' && n[8] == 'M' && n[9] == 'G') {
+            uint16_t no = (uint16_t)((n[3] - '0') * 100 + (n[4] - '0') * 10 + (n[5] - '0'));
+
+            if (no > max_no) max_no = no;
+        }
+    }
+    if (max_no >= 999) return 1;
+    return (uint16_t)(max_no + 1);
+}
+
+/* 保存：自动编号新文件 IMGxxx.IMG，读 GRAM 逐行写（小端 RGB565）。
+ * 编号扫描在 FATFS 目录缓存上做（几十项），耗时 <1ms 可忽略 */
 static uint8_t paint_save(void)
 {
     FIL f;
     UINT bw;
-    uint16_t x, y;
+    uint16_t x, y, no;
     uint8_t ok = 1;
     uint8_t hdr[3] = { 'K', 'P', '1' };
+    char path[16];
 
     if (!fs_ensure()) return 0;
+    no = next_img_no();
+    path[0] = '0'; path[1] = ':'; path[2] = '/';
+    path[3] = 'I'; path[4] = 'M'; path[5] = 'G';
+    path[6] = (char)('0' + no / 100);
+    path[7] = (char)('0' + (no / 10) % 10);
+    path[8] = (char)('0' + no % 10);
+    path[9] = '.'; path[10] = 'I'; path[11] = 'M'; path[12] = 'G';
+    path[13] = 0;
     cursor_hide();                       /* 光标不入画 */
-    if (f_open(&f, "0:/PAINT.IMG", FA_CREATE_ALWAYS | FA_WRITE) == FR_OK) {
+    if (f_open(&f, path, FA_CREATE_NEW | FA_WRITE) == FR_OK) {
         if (f_write(&f, hdr, 3, &bw) != FR_OK || bw != 3) ok = 0;
         for (y = CANVAS_Y0; ok && y <= CANVAS_Y1; y++) {
             for (x = 0; x < SCR_W; x++) {
@@ -143,33 +180,10 @@ static uint8_t paint_save(void)
         }
         f_close(&f);
     } else {
-        ok = 0;
+        ok = 0;   /* 编号已占用或卷满：自动编号冲突理论不存在（刚扫过），
+                   * 卷满则 FS 报错，用户需在 Files 删旧图 */
     }
     cursor_show();
-    return ok;
-}
-
-/* 加载：读文件逐点写屏。返回 0 = 无文件/格式错（画布保持空白） */
-static uint8_t paint_load(void)
-{
-    FIL f;
-    UINT br;
-    uint16_t x, y;
-    uint8_t hdr[3];
-    uint8_t ok = 1;
-
-    if (!fs_ensure()) return 0;
-    if (f_open(&f, "0:/PAINT.IMG", FA_READ) != FR_OK) return 0;
-    if (f_read(&f, hdr, 3, &br) != FR_OK || br != 3 ||
-        hdr[0] != 'K' || hdr[1] != 'P' || hdr[2] != '1') {
-        ok = 0;
-    }
-    for (y = CANVAS_Y0; ok && y <= CANVAS_Y1; y++) {
-        if (f_read(&f, s_line, SCR_W * 2, &br) != FR_OK || br != SCR_W * 2) { ok = 0; break; }
-        for (x = 0; x < SCR_W; x++)
-            atk_md0280_draw_point(x, y, (uint16_t)(s_line[x * 2] | (s_line[x * 2 + 1] << 8)));
-    }
-    f_close(&f);
     return ok;
 }
 
@@ -254,19 +268,14 @@ static int8_t hit_btn(uint16_t cx, uint16_t cy)
 
 void app_paint_open(void)
 {
-    uint8_t loaded;
-
     atk_md0280_clear(ATK_MD0280_WHITE);
     app_draw_title("Paint");
     s_drawing = 0;
     s_hover = -1;
     s_color_idx = 0;
-    draw_toolbar();
-
-    /* 画布：加载上次保存的图；无文件 = 新画布（提示 2 秒） */
-    loaded = paint_load();
-    s_status = loaded ? "" : "NEW";
-    s_status_sec = loaded ? 0 : 2;
+    s_status = "";
+    s_status_sec = 0;
+    draw_toolbar();              /* 画布恒为空白画板：保存的画在 Files 查看 */
 
     cursor_init(SCR_W / 2, (CANVAS_Y0 + CANVAS_Y1) / 2);
     cursor_show();
