@@ -93,7 +93,7 @@ static uint8_t g_view_img = 0;          /* 查看模式：1=图片（PAINT.IMG�
 static char g_view_raw[VIEW_LINES * VIEW_CHARS];   /* 原始内容缓冲 */
 static char g_view_grid[VIEW_LINES][VIEW_CHARS + 1]; /* 压行后的网格 */
 static uint8_t g_view_lines;
-static uint8_t g_img_line[240 * 2];     /* 图片查看行缓冲 480B */
+static uint8_t g_img_buf[240 * 2 * 8];  /* 图片查看缓冲：8 行 3840B（批量读/写，减少 SPI 扇区读取次数） */
 static char g_view_name[13];
 static uint32_t g_view_size;
 
@@ -609,9 +609,10 @@ static void open_file(void)
 }
 
 /* 图片视图重绘：IMG*.IMG（"KP1" magic + RGB565 像素流，240×220）
- * 逐行读回、整行批量写屏（atk_md0280_write_area：窗口设置一次 + 连续写
- * 像素，全图 ~10ms 显示完，无逐行刷新感——这正是"打开图片直接显示"
- * 的关键）。二进制像素文件用文本视图只会看到乱码（"KP1"+不可打印字节），
+ * 8 行批量读 + atk_md0280_write_area 批量写屏（窗口设置一次 + 连续写
+ * 像素，28 次窗口设置、W25Q 连续扇区读，全图 ~70ms 显示完——一次读完
+ * 整块再写，无逐行刷新感，这正是"打开图片直接显示"的关键）。
+ * 二进制像素文件用文本视图只会看到乱码（"KP1"+不可打印字节），
  * 识别 magic 后按图像渲染。尺寸固定无需文件内宽高 */
 static void draw_img_view(void)
 {
@@ -630,12 +631,18 @@ static void draw_img_view(void)
                          ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
     if (f_open(&f, path, FA_READ) == FR_OK) {
         if (f_lseek(&f, 3) == FR_OK) {   /* 跳过 magic */
-            for (y = 0; y < 220; y++) {
-                if (f_read(&f, g_img_line, 480, &br) != FR_OK || br != 480) break;
+            /* 一次读 8 行、一次写 8 行（窗口设一次写 1920 像素）：逐行读写时
+             * 每行触发 1~2 次 W25Q 扇区 SPI 读（480B 跨 512B 扇区边界），
+             * 220 行 ≈ 0.15s 的"逐行画"过程肉眼可见；批量后窗口设置 220→28
+             * 次、SPI 读连续化，总耗时 ~70ms 无刷新感 */
+            for (y = 0; y < 220; y += 8) {
+                uint16_t rows = (uint16_t)((220 - y < 8) ? (220 - y) : 8);
+
+                if (f_read(&f, g_img_buf, rows * 480, &br) != FR_OK || br != rows * 480) break;
                 /* 小端字节对按 uint16_t 数组直写（ARM 小端，内存布局与
                  * 文件一致；静态数组天然对齐，M3 硬件支持非对齐读） */
                 atk_md0280_write_area(0, (uint16_t)(52 + y), (uint16_t)(SCR_W - 1),
-                                      (uint16_t)(52 + y), (const uint16_t *)g_img_line);
+                                      (uint16_t)(52 + y + rows - 1), (const uint16_t *)g_img_buf);
             }
         }
         f_close(&f);

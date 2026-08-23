@@ -336,6 +336,11 @@ void app_paint_handle(input_event_t *ev)
             } else if (btn == 6) {
                 paint_clear();
             } else if (btn == 7) {
+                /* 先显示 SAV 再保存：保存约 0.6s（W25Q 页编程物理时间 +
+                 * 位带 SPI 读写），无反馈的死等体验差；结束后换 OK!/ERR */
+                s_status = "SAV";
+                s_status_sec = 2;
+                toolbar_redraw();
                 if (paint_save()) { s_status = "OK!"; s_status_sec = 2; }
                 else              { s_status = "ERR"; s_status_sec = 2; }
                 toolbar_redraw();
