@@ -3,11 +3,15 @@
  * @brief   Paint 应用：画图 + FATFS 保存/加载（重新上电后可查看）
  *
  * 功能（对照题目）：
- *   - 画笔：摇杆移动光标（笔尖），按住 SW 拖动画线（3px 粗笔头）
+ *   - 画笔：SW 按一次进入画线模式（状态区显示 DRW），此后摇杆移动即画线
+ *     （3px 粗笔头）；再按一次退出。不用"按住拖动"——摇杆按键手感软，
+ *     按住易松脱/抖动，开关式更稳定
  *   - 颜色：6 色格（黑/红/蓝/绿/黄/白=橡皮），光标点选
  *   - 清空：[CLR] 按钮（画布刷白）
  *   - 保存：[SAVE] 按钮 → 从 LCD 逐行读回像素 → 写 FATFS 文件 0:/PAINT.IMG
  *   - 加载：进入应用时读回文件逐点写屏 → 断电/重启后画面保持
+ *   - 预览：Files 应用打开 PAINT.IMG 时识别 "KP1" magic 直接显示图像
+ *     （二进制像素文件用文本查看器只会看到乱码，见 app_files.c draw_img_view）
  *
  * 存储格式（0:/PAINT.IMG）：3 字节 magic "KP1" + 画布像素流
  *   （RGB565 小端，240×220，行优先）。无内嵌宽高——画布尺寸固定，
@@ -171,13 +175,17 @@ static uint8_t paint_load(void)
 
 /* ---------- 工具栏 ---------- */
 
-/* 状态文字区（SAVE 按钮右侧 3 字符位） */
+/* 状态文字区（SAVE 按钮右侧 3 字符位）：
+ * 保存结果（2 秒）优先，其次画线模式指示 DRW，否则空白 */
 static void draw_status_area(void)
 {
     atk_md0280_fill(STAT_X, BTN_Y0, SCR_W - 1, BTN_Y1, 0xDEFB);
-    if (s_status[0] != 0)
+    if (s_status_sec > 0 && s_status[0] != 0)
         atk_md0280_show_string(STAT_X, BTN_Y0 + 9, 28, 16, (char *)s_status,
                                ATK_MD0280_LCD_FONT_12, ATK_MD0280_BLACK);
+    else if (s_drawing)
+        atk_md0280_show_string(STAT_X, BTN_Y0 + 9, 28, 16, (char *)"DRW",
+                               ATK_MD0280_LCD_FONT_12, ATK_MD0280_RED);
 }
 
 /* 色格：外框 2px（选中=蓝，未选=浅灰），内实心色 */
@@ -271,10 +279,24 @@ void app_paint_handle(input_event_t *ev)
 
     if (ev->type == EV_MOUSE_MOVE) {
         cursor_get_pos(&cx, &cy);
-        if (s_drawing && cy >= CANVAS_Y0 && cy <= CANVAS_Y1) {
-            paint_stroke(s_lx, s_ly, cx, cy);   /* 按住拖动：连线画 */
-            s_lx = cx;
-            s_ly = cy;
+        if (s_drawing) {
+            if (cy >= CANVAS_Y0 && cy <= CANVAS_Y1) {
+                if (s_lx == 0xFFFF) {
+                    /* 刚从画布外回来：锚点失效，只落笔头不连线（防跨工具栏拉线） */
+                    uint16_t xa = (cx > 0) ? (uint16_t)(cx - 1) : 0;
+                    uint16_t ya = (cy > CANVAS_Y0) ? (uint16_t)(cy - 1) : CANVAS_Y0;
+                    uint16_t xb = (cx < SCR_W - 1) ? (uint16_t)(cx + 1) : (uint16_t)(SCR_W - 1);
+                    uint16_t yb = (cy < CANVAS_Y1) ? (uint16_t)(cy + 1) : CANVAS_Y1;
+
+                    atk_md0280_fill(xa, ya, xb, yb, s_colors[s_color_idx]);
+                } else {
+                    paint_stroke(s_lx, s_ly, cx, cy);   /* 连续画线 */
+                }
+                s_lx = cx;
+                s_ly = cy;
+            } else {
+                s_lx = 0xFFFF;   /* 光标在画布外：标记断线，回画布后不拉长线 */
+            }
         }
         /* 工具栏 hover 变化 → 重绘按钮（色格 hover 不区分，只 CLR/SAVE） */
         btn = hit_btn(cx, cy);
@@ -289,11 +311,12 @@ void app_paint_handle(input_event_t *ev)
     } else if (ev->type == EV_KEY_DOWN) {
         cursor_get_pos(&cx, &cy);
         if (cy >= CANVAS_Y0 && cy <= CANVAS_Y1) {
-            /* 落笔：从按下位置开始画 */
-            s_drawing = 1;
+            /* 画线模式开关：按一次进入（此后移动即画），再按一次退出。
+             * 进入/退出都刷新状态区（DRW 指示），不落笔点 */
+            s_drawing = s_drawing ? 0 : 1;
             s_lx = cx;
             s_ly = cy;
-            paint_stroke(s_lx, s_ly, s_lx, s_ly);
+            toolbar_redraw();
         } else {
             btn = hit_btn(cx, cy);
             if (btn >= 0 && btn < COLOR_N) {
@@ -309,8 +332,6 @@ void app_paint_handle(input_event_t *ev)
                 toolbar_redraw();
             }
         }
-    } else if (ev->type == EV_KEY_UP) {
-        s_drawing = 0;
     } else if (ev->type == EV_TICK) {
         /* 状态文字超时清除 */
         if (s_status_sec > 0) {

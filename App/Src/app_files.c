@@ -8,7 +8,8 @@
  *     重名检测（f_stat 查重，重名则编号+1），写入模板内容（含 RTC 时间戳）
  *   - 删除文件：点 [Del] 进入确认态（红字提示），停在 [Del] 上按 SW 取消，
  *     光标移到别处按 SW 确认删除（f_unlink）；K1 被桌面框架接管收不到
- *   - 读写保存：查看 = 读（文本视图，最多 800 字节）；断电后文件保持
+ *   - 读写保存：查看 = 读（文本视图最多 800 字节；识别 "KP1" magic 的
+ *     Paint 图片文件 → 图片预览逐行读回写屏）；断电后文件保持
  *     （初始化时 README.TXT 标志文件验证，见 fs_init）
  *   - 文件表：内存缓存 = 目录的缓存视图，每条 5 个字段对照题目——
  *     name=文件名 type=文件类型 size=文件大小 cluster=存储位置(FAT 起始簇)
@@ -88,9 +89,11 @@ static uint8_t g_tb_hover = 0;       /* 工具栏 hover：1=[New] 2=[Del] 0=无 
 
 /* ---------- 查看模式 ---------- */
 static uint8_t g_viewing = 0;
+static uint8_t g_view_img = 0;          /* 查看模式：1=图片（PAINT.IMG）0=文本 */
 static char g_view_raw[VIEW_LINES * VIEW_CHARS];   /* 原始内容缓冲 */
 static char g_view_grid[VIEW_LINES][VIEW_CHARS + 1]; /* 压行后的网格 */
 static uint8_t g_view_lines;
+static uint8_t g_img_line[240 * 2];     /* 图片查看行缓冲 480B */
 static char g_view_name[13];
 static uint32_t g_view_size;
 
@@ -587,21 +590,65 @@ static void open_file(void)
         if (f_read(&f, g_view_raw, sizeof(g_view_raw), &br) != FR_OK) br = 0;
         f_close(&f);
     }
-    /* 压成 40 列网格：丢弃 \r\n，其余照抄 */
-    for (i = 0; i < br; i++) {
-        char c = g_view_raw[i];
-        if (c == '\r' || c == '\n') continue;
-        if (col == VIEW_CHARS) { line++; col = 0; }
-        if (line >= VIEW_LINES) break;
-        g_view_grid[line][col++] = c;
+    /* 识别 Paint 图片（magic "KP1"）→ 图片模式；否则文本模式 */
+    g_view_img = (br >= 3 && g_view_raw[0] == 'K' && g_view_raw[1] == 'P' &&
+                  g_view_raw[2] == '1') ? 1 : 0;
+    if (!g_view_img) {
+        /* 压成 40 列网格：丢弃 \r\n，其余照抄 */
+        for (i = 0; i < br; i++) {
+            char c = g_view_raw[i];
+            if (c == '\r' || c == '\n') continue;
+            if (col == VIEW_CHARS) { line++; col = 0; }
+            if (line >= VIEW_LINES) break;
+            g_view_grid[line][col++] = c;
+        }
+        g_view_lines = line + (col > 0 ? 1 : 0);
+    } else {
+        g_view_lines = 0;
     }
-    g_view_lines = line + (col > 0 ? 1 : 0);
+}
+
+/* 图片视图重绘：PAINT.IMG（"KP1" magic + RGB565 像素流，240×220）
+ * 逐行读回写屏。二进制像素文件用文本视图只会看到乱码（"KP1"+不可打印
+ * 字节），识别 magic 后按图像渲染。整文件重读 ~1s，查看本身是静态操作
+ * （与 Paint 保存同款逐点写屏，尺寸固定无需文件内宽高） */
+static void draw_img_view(void)
+{
+    FIL f;
+    UINT br;
+    uint16_t x, y;
+    char path[16];
+    uint8_t hid;
+
+    memcpy(path, "0:/", 3);
+    memcpy(path + 3, g_view_name, 13);   /* 连 '\0' 一起拷 */
+    hid = redraw_protect_begin(0, 25, SCR_W - 1, SCR_H - 1);
+    atk_md0280_fill(0, 25, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
+    atk_md0280_show_string(8, 30, 150, 16, g_view_name, ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_xnum(170, 32, g_view_size, 6, ATK_MD0280_NUM_SHOW_NOZERO,
+                         ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
+    if (f_open(&f, path, FA_READ) == FR_OK) {
+        if (f_lseek(&f, 3) == FR_OK) {   /* 跳过 magic */
+            for (y = 0; y < 220; y++) {
+                if (f_read(&f, g_img_line, 480, &br) != FR_OK || br != 480) break;
+                for (x = 0; x < 240; x++)
+                    atk_md0280_draw_point(x, (uint16_t)(52 + y),
+                        (uint16_t)(g_img_line[x * 2] | (g_img_line[x * 2 + 1] << 8)));
+            }
+        }
+        f_close(&f);
+    }
+    atk_md0280_show_string(8, 306, 150, 12, (char *)"SW: close  K1: exit",
+                           ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
+    redraw_protect_end(hid);
 }
 
 /* 文本视图重绘 */
 static void draw_view(void)
 {
     uint8_t i, hid;
+
+    if (g_view_img) { draw_img_view(); return; }
 
     hid = redraw_protect_begin(0, 25, SCR_W - 1, SCR_H - 1);
     atk_md0280_fill(0, 25, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);

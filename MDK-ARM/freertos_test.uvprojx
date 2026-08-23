@@ -900,6 +900,11 @@
               <FileType>1</FileType>
               <FilePath>..\App\Src\app_music.c</FilePath>
             </File>
+            <File>
+              <FileName>app_paint.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_paint.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
