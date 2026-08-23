@@ -1,18 +1,23 @@
 ﻿/**
  * @file    app_config.h
- * @brief   系统配置：光标大小/灵敏度等参数
- *          设置应用修改这里，阶段3再序列化进 Flash 实现重启保持
+ * @brief   系统配置：光标/亮度/音量/熄屏等参数
+ *          设置应用（app_settings）修改字段，sys_cfg 持久化到 Flash，
+ *          各模块（joystick/cursor/sys_backlight/music/熄屏）实时读字段
  */
 #ifndef __APP_CONFIG_H
 #define __APP_CONFIG_H
 
 #include <stdint.h>
 
-/* 系统配置结构体——设置应用改字段，各任务读字段，即改即生效 */
+/* 系统配置结构体——设置应用改字段，各模块读字段，即改即生效 */
 typedef struct
 {
     uint8_t cursor_size;    /* 光标大小 1~4（上限由 cursor.c 背景缓冲决定，>4 会被钳制） */
     uint8_t cursor_sens;    /* 光标灵敏度 1~10 */
+    uint8_t brightness;     /* 屏幕亮度 10~100%（sys_backlight PWM 占空比） */
+    uint8_t volume;         /* 系统音量 0~100%（Music 蜂鸣器 PWM 占空比） */
+    uint8_t screen_time;    /* 熄屏时间（秒）：0=永不熄屏，10~300 */
+    uint8_t rsv;            /* 保留位（结构对齐，后续扩展字段时布局不变） */
 } sys_config_t;
 
 extern sys_config_t g_sys_cfg;

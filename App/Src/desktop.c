@@ -3,8 +3,11 @@
  * @brief   桌面框架：上电启动界面 → 密码登录 → 桌面主界面
  *
  * 架构：由 ui_task 逐事件调用（ui_task 只做事件分发，本文件是桌面框架）
- *   - 状态机：UI_BOOT → UI_LOGIN → UI_DESKTOP（桌面态内嵌应用前台态：
- *     s_cur_app 非空时事件全部转发给注册表中的应用，K1 返回桌面）
+ *   - 状态机：UI_BOOT → UI_CLOCK_SET（RTC 失效时）→ UI_LOGIN → UI_DESKTOP
+ *     （桌面态内嵌应用前台态：s_cur_app 非空时事件全部转发给注册表中的应用，
+ *     K1 返回桌面）
+ *   - 校时界面：精英板 VBAT 无电池，断电 RTC 丢失——每次开机自动进
+ *     Set Clock 输入真实时间（复用登录数字键盘），K1 可跳过
  *   - 密码 4 位，错误提示，连续错误进入锁定（倒计时，输入全部无效）
  *   - 数字键盘交互：摇杆移光标选格（蓝框高亮），SW 按下输入
  *   - K1 逐级回退：应用 → 桌面（锁屏） → 登录页
@@ -25,6 +28,9 @@
 #include "event.h"
 #include "joystick.h"
 #include "rtc_app.h"
+#include "sys_stats.h"
+#include "sys_backlight.h"
+#include "app_config.h"
 #include "cmsis_os.h"
 
 /* ---------- 配置参数（阶段6 可改为从 Flash 加载） ---------- */
@@ -60,6 +66,7 @@
 /* ---------- 状态机 ---------- */
 typedef enum {
     UI_BOOT,        /* 启动界面（停留 2 秒） */
+    UI_CLOCK_SET,   /* 校时界面（RTC 失效时自动进入，输入真实时间） */
     UI_LOGIN,       /* 密码登录 */
     UI_DESKTOP,     /* 桌面主界面 */
 } ui_state_t;
@@ -71,6 +78,14 @@ static uint8_t s_fail_cnt = 0;  /* 连续错误计数 */
 static int8_t  s_hover = 4;     /* 键盘高亮格索引 0~11 */
 static const app_t *s_cur_app = NULL;  /* 非空 = 应用前台态（注册表指针） */
 static int8_t  s_hover_icon = -1;      /* 桌面 hover 图标索引（-1 = 无） */
+static uint8_t s_clock_from_app = 0;   /* 校时界面来源：1=应用（Settings）进入，
+                                        * 完成后回桌面；0=开机自动进入，完成后回登录 */
+static uint8_t  s_sleeping = 0;        /* 熄屏态：背光灭，任一输入事件唤醒 */
+static uint16_t s_idle_sec = 0;        /* 空闲累计秒数（EV_TICK 递增，输入重置） */
+
+/* 校时输入：8 位数字 = MM-DD HH:MM（月/日/时/分，年取编译年份） */
+static char s_clk[8];           /* 已输入数字字符 */
+static uint8_t s_clk_len = 0;
 
 /* 键盘内容：'*' = 占位空格，'<' = 退格 */
 static const char s_key[KEY_ROWS][KEY_COLS] = {
@@ -269,12 +284,66 @@ static uint8_t hit_icon(uint16_t x, uint16_t y)
 static void draw_boot(void)
 {
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_BLUE);
-    atk_md0280_show_string(72, 120, 160, 32, (char *)"MINI OS",
+    atk_md0280_show_string(72, 120, 160, 32, (char *)"KazepOS",
                            ATK_MD0280_LCD_FONT_32, ATK_MD0280_WHITE);
     atk_md0280_show_string(80, 168, 120, 16, (char *)"Starting...",
                            ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
-    atk_md0280_show_string(80, 200, 160, 12, (char *)"BUILD 0819 (SilentM)",
+    atk_md0280_show_string(80, 200, 160, 12, (char *)"BUILD 0822 (KazepOS)",
                            ATK_MD0280_LCD_FONT_12, ATK_MD0280_WHITE);
+}
+
+/* ---------- 校时界面（Set Clock） ----------
+ * 用途：RTC 断电失效（无 VBAT 电池）时每次开机自动进入，输入真实时间。
+ * 布局复用登录键盘：顶部提示 + 输入显示行 + 数字键盘
+ * 输入 8 位：MM-DD HH:MM；满 8 位校验（月 1-12 日 1-31 时 0-23 分 0-59），
+ * 合法 → 写入 RTC（年份取编译年份）+ BKP 魔数 → 进登录；
+ * 非法 → 清空重输；K1 = 跳过校时（时间保持编译时刻） */
+
+/* 输入行：MM-DD HH:MM，未输的位显示 '_'（16 号字，居中 y=52 行） */
+static void draw_clk_input(void)
+{
+    uint8_t i, hid;
+    char line[12];
+
+    for (i = 0; i < 8; i++) line[i] = (i < s_clk_len) ? s_clk[i] : '_';
+    line[8] = 0;
+    /* 8 字符 → "XX-XX XX:XX"：12 个字符位（含分隔符） */
+    {
+        char full[12];
+        full[0] = line[0]; full[1] = line[1]; full[2] = '-';
+        full[3] = line[2]; full[4] = line[3]; full[5] = ' ';
+        full[6] = line[4]; full[7] = line[5]; full[8] = ':';
+        full[9] = line[6]; full[10] = line[7]; full[11] = 0;
+        hid = redraw_protect_begin(30, 52, 210, 58);
+        atk_md0280_fill(30, 52, 210, 58, ATK_MD0280_WHITE);
+        atk_md0280_show_string((SCR_W - 12 * 8) / 2, 52, 160, 16, full,
+                               ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLUE);
+        redraw_protect_end(hid);
+    }
+}
+
+/* 进入校时界面：清屏 → 提示 → 输入行 → 键盘 → 光标定位数字 5 */
+static void enter_clock_set(void)
+{
+    uint8_t i;
+
+    atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
+    s_state = UI_CLOCK_SET;
+    s_clk_len = 0;
+    s_hover = 4;
+    for (i = 0; i < 8; i++) s_clk[i] = 0;
+
+    draw_js_status();
+    draw_hint(g_js_on ? "Set Clock (MM-DD HH:MM)" : "Joystick OFF - Press K0",
+              g_js_on ? ATK_MD0280_GRAY : CLR_ERR);
+    draw_clk_input();
+    atk_md0280_show_string(24, 78, 200, 12, (char *)"K1: skip  Enter: SW",
+                           ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
+    for (i = 0; i < KEY_COLS * KEY_ROWS; i++) draw_key_cell(i, 0);
+    draw_key_cell(s_hover, 1);
+
+    cursor_init(KEY_X0 + KEY_W / 2 + KEY_W, KEY_Y0 + KEY_H / 2 + KEY_H);
+    cursor_show();
 }
 
 /* 进入登录界面：清屏 → 标题 → 密码框 → 键盘 → 光标定位数字 5 */
@@ -310,9 +379,9 @@ static void enter_desktop(void)
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
     s_state = UI_DESKTOP;
 
-    /* 顶部状态栏：MINI OS | JS 状态 | 时间 */
+    /* 顶部状态栏：KazepOS | JS 状态 | 时间 */
     atk_md0280_fill(0, 0, SCR_W - 1, 24, ATK_MD0280_BLUE);
-    atk_md0280_show_string(8, 5, 100, 16, (char *)"MINI OS",
+    atk_md0280_show_string(8, 5, 100, 16, (char *)"KazepOS",
                            ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
     draw_js_status();
     draw_clock();
@@ -354,21 +423,134 @@ static void lock_screen(void)
 
 /* ---------- 对外接口 ---------- */
 
-/* 上电初始化：BOOT 界面 2 秒 → 自动进 LOGIN（在 ui_task 初始化时调用一次） */
+/* 校时结束出口：从应用（Settings）进入 → 回桌面（内部重绘桌面）；
+ * 开机自动进入 → 回登录页（须在 enter_desktop 定义之后，C90） */
+static void clock_set_done(void)
+{
+    if (s_clock_from_app) {
+        s_clock_from_app = 0;
+        enter_desktop();
+    } else {
+        enter_login();
+    }
+}
+
+/* 上电初始化：BOOT 界面 2 秒 → RTC 失效则先进校时，否则直接登录
+ * （在 ui_task 初始化时调用一次） */
 void desktop_init(void)
 {
     draw_boot();
     osDelay(2000);               /* 启动画面停留 2 秒 */
     xQueueReset(g_event_queue);  /* 丢弃启动期间积压的摇杆事件 */
-    enter_login();
+    if (rtc_app_needs_setup()) {
+        enter_clock_set();       /* 断电过/首次 → 先设真实时间 */
+    } else {
+        enter_login();
+    }
+}
+
+/* Settings 的校时入口：切到校时界面（当前应用保持打开，
+ * s_cur_app 在完成后由 enter_desktop 清空回桌面） */
+void desktop_enter_clock_set(void)
+{
+    s_clock_from_app = 1;        /* 标记来源：完成后回桌面 */
+    enter_clock_set();
 }
 
 /* 事件分发：按当前状态决定事件含义 */
 void desktop_handle_event(input_event_t *ev)
 {
+    /* ---- 熄屏管理（所有状态共享）：空闲超时灭背光，任一输入唤醒 ---- */
+    if (ev->type == EV_TICK) {
+        if (s_idle_sec < 300) s_idle_sec++;
+        if (!s_sleeping && g_sys_cfg.screen_time > 0
+         && s_idle_sec >= g_sys_cfg.screen_time) {
+            sys_backlight_set(0);        /* 灭背光（屏幕内容保持，省电） */
+            s_sleeping = 1;
+            g_stats_sleeps++;            /* 统计：熄屏次数（日志模块消费） */
+        }
+    } else if (s_sleeping) {
+        sys_backlight_set(g_sys_cfg.brightness);   /* 任一输入 → 恢复亮度 */
+        s_sleeping = 0;
+        s_idle_sec = 0;
+    } else {
+        s_idle_sec = 0;
+    }
+
     switch (s_state) {
     case UI_BOOT:
         break;   /* 防御：BOOT 阶段由 desktop_init 阻塞渡过，不会到达这里 */
+
+    case UI_CLOCK_SET: {
+        /* 键盘交互与登录完全一致：移光标高亮 → SW 输入数字/退格 */
+        uint16_t cx, cy;
+        cursor_get_pos(&cx, &cy);
+
+        if (ev->type == EV_DEV_TOGGLE) {
+            /* K0 设备开关：红/绿切换 + 提示行同步（同登录界面） */
+            draw_js_status();
+            draw_hint(g_js_on ? "Set Clock (MM-DD HH:MM)" : "Joystick OFF - Press K0",
+                      g_js_on ? ATK_MD0280_GRAY : CLR_ERR);
+        } else if (ev->type == EV_MOUSE_MOVE) {
+            uint8_t idx = hit_key(cx, cy);
+            if (idx != 0xFF && idx != s_hover) {
+                uint8_t hid;
+                uint16_t ox, oy, nx, ny, rx0, ry0, rx1, ry1;
+
+                ox = KEY_X0 + (s_hover % KEY_COLS) * KEY_W;
+                oy = KEY_Y0 + (s_hover / KEY_COLS) * KEY_H;
+                nx = KEY_X0 + (idx % KEY_COLS) * KEY_W;
+                ny = KEY_Y0 + (idx / KEY_COLS) * KEY_H;
+                rx0 = (ox < nx) ? ox : nx;
+                ry0 = (oy < ny) ? oy : ny;
+                rx1 = ((ox > nx) ? ox : nx) + KEY_W - 1;
+                ry1 = ((oy > ny) ? oy : ny) + KEY_H - 1;
+
+                hid = redraw_protect_begin(rx0, ry0, rx1, ry1);
+                draw_key_cell(s_hover, 0);
+                s_hover = idx;
+                draw_key_cell(idx, 1);
+                redraw_protect_end(hid);
+            }
+        } else if (ev->type == EV_BACK) {
+            /* K1 = 跳过校时（时间保持编译时刻，进登录/回桌面） */
+            clock_set_done();
+        } else if (ev->type == EV_KEY_DOWN) {
+            uint8_t idx, i, ok = 1;
+            char c;
+
+            idx = hit_key(cx, cy);
+            if (idx == 0xFF) break;
+            c = s_key[idx / KEY_COLS][idx % KEY_COLS];
+
+            if (c == '<') {                  /* 退格 */
+                if (s_clk_len > 0) { s_clk_len--; draw_clk_input(); }
+            } else if (c != '*') {           /* 数字 */
+                if (s_clk_len < 8) {
+                    s_clk[s_clk_len++] = c;
+                    draw_clk_input();
+                }
+                if (s_clk_len == 8) {        /* 满 8 位：MM-DD HH:MM 校验 */
+                    uint8_t mon  = (uint8_t)((s_clk[0] - '0') * 10 + (s_clk[1] - '0'));
+                    uint8_t day  = (uint8_t)((s_clk[2] - '0') * 10 + (s_clk[3] - '0'));
+                    uint8_t hour = (uint8_t)((s_clk[4] - '0') * 10 + (s_clk[5] - '0'));
+                    uint8_t min  = (uint8_t)((s_clk[6] - '0') * 10 + (s_clk[7] - '0'));
+
+                    if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31
+                     && hour <= 23 && min <= 59) {
+                        rtc_app_set_datetime(mon, day, hour, min);
+                        clock_set_done();    /* 校时完成 → 登录 / 回桌面 */
+                    } else {
+                        for (i = 0; i < 8; i++) { ok = 0; s_clk[i] = 0; }
+                        s_clk_len = 0;
+                        draw_clk_input();
+                        draw_hint("Invalid! Re-enter", CLR_ERR);
+                    }
+                }
+            }
+        }
+        break;
+    }
 
     case UI_LOGIN: {
         uint16_t cx, cy;

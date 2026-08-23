@@ -880,6 +880,21 @@
               <FileType>1</FileType>
               <FilePath>../App/Src/fault_report.c</FilePath>
             </File>
+            <File>
+              <FileName>app_settings.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_settings.c</FilePath>
+            </File>
+            <File>
+              <FileName>sys_backlight.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\sys_backlight.c</FilePath>
+            </File>
+            <File>
+              <FileName>sys_cfg.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\sys_cfg.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

@@ -10,6 +10,9 @@
 #include "cursor.h"
 #include "desktop.h"
 #include "rtc_app.h"
+#include "sys_cfg.h"
+#include "sys_backlight.h"
+#include "app_config.h"
 
 void ui_task(void *argument)
 {
@@ -20,6 +23,10 @@ void ui_task(void *argument)
     {
         atk_md0280_clear(ATK_MD0280_WHITE);
         rtc_app_init();                /* 时间源：内部 RTC（LSE，VBAT 保持） */
+        sys_backlight_init();          /* 先点亮背光（默认亮度），再加载配置——
+                                        * 即使配置读取异常，屏幕也可见（好诊断） */
+        sys_cfg_load();                /* Flash → g_sys_cfg：灵敏度/亮度等在登录前生效 */
+        sys_backlight_set(g_sys_cfg.brightness);   /* 应用配置的亮度 */
         desktop_init();                /* BOOT 2秒 → LOGIN，内部完成光标接管 */
     }
 

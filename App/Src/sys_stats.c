@@ -13,10 +13,12 @@
 volatile uint32_t g_stats_events = 0;
 volatile uint32_t g_stats_drops  = 0;
 volatile uint32_t g_stats_errors = 0;
+volatile uint32_t g_stats_sleeps = 0;
 
 void sys_stats_reset(void)
 {
     g_stats_events = 0;
     g_stats_drops  = 0;
     g_stats_errors = 0;
+    g_stats_sleeps = 0;
 }

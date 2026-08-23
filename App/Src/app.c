@@ -13,6 +13,7 @@
 #include "app.h"
 #include "app_monitor.h"
 #include "app_files.h"
+#include "app_settings.h"
 #include "cursor.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 
@@ -28,7 +29,7 @@ static void app_stub_handle(input_event_t *ev)
 static void app_stub_open(void)
 {
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
-    app_draw_title("MINI OS");
+    app_draw_title("KazepOS");
     atk_md0280_show_string((SCR_W - 11 * 12) / 2, 150, 240, 24,
                            (char *)"Coming Soon", ATK_MD0280_LCD_FONT_24, ATK_MD0280_GRAY);
     atk_md0280_show_string((SCR_W - 20 * 8) / 2, 196, 240, 16,
@@ -43,7 +44,7 @@ const app_t g_apps[] = {
     {"Files",    ATK_MD0280_BLUE,     app_files_open,   app_files_handle},
     {"Paint",    ATK_MD0280_GREEN,    app_stub_open,    app_stub_handle},
     {"Music",    ATK_MD0280_MAGENTA,  app_stub_open,    app_stub_handle},
-    {"Settings", ATK_MD0280_YELLOW,   app_stub_open,    app_stub_handle},
+    {"Settings", ATK_MD0280_YELLOW,   app_settings_open, app_settings_handle},
     {"Logs",     ATK_MD0280_CYAN,     app_stub_open,    app_stub_handle},
     {"Monitor",  ATK_MD0280_GRAY,     app_monitor_open, app_monitor_handle},
 };

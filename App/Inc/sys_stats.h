@@ -13,6 +13,7 @@
 extern volatile uint32_t g_stats_events;   /* 输入事件总数（input_task 每次产生事件 +1） */
 extern volatile uint32_t g_stats_drops;    /* 队列满丢弃数（xQueueSend 失败 = 背压证据） */
 extern volatile uint32_t g_stats_errors;   /* 系统级错误累计（RTC 降级 / 文件系统失败等） */
+extern volatile uint32_t g_stats_sleeps;   /* 熄屏次数（desktop 空闲超时灭背光 +1，唤醒不计数） */
 
 void sys_stats_reset(void);                /* 清零（开机时调用一次） */
 
