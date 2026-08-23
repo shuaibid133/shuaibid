@@ -36,6 +36,8 @@
 #include "app_files.h"
 #include "ff.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 
 #define SCR_W   ATK_MD0280_LCD_WIDTH
@@ -69,6 +71,8 @@ static int8_t   s_hover = -1;        /* 工具栏 hover：0..5 色格 6=CLR 7=SA
 static uint16_t s_lx = 0, s_ly = 0;  /* 上一笔位置（连线用） */
 static const char *s_status = "";    /* 状态文字（"OK!"/"ERR"/"NEW"） */
 static uint8_t  s_status_sec = 0;    /* 状态文字剩余显示秒数 */
+static uint8_t  s_status_hold = 0;   /* 保存/加载后豁免的积压 TICK 数（防状态被秒清） */
+static char     s_status_buf[4];     /* 耗时秒数字符缓冲（如 "12S"） */
 static uint8_t  s_line[SCR_W * 2];   /* 行缓冲 480B（保存/加载逐行读写） */
 
 /* ---------- 局部重绘保护（与桌面框架同协议） ---------- */
@@ -150,18 +154,21 @@ static uint16_t next_img_no(void)
 /* 保存：自动编号新文件 IMGxxx.IMG，读 GRAM 逐行写（小端 RGB565）。
  * 编号扫描在 FATFS 目录缓存上做（几十项），耗时 <1ms 可忽略
  * 返回：1=成功 2=画布全白（已删除半成品，界面显示 EMP） 0=失败
+ * ms_out：保存耗时（FreeRTOS tick 换算），诊断/反馈用
  * 全白检测：没进入 DRW 模式"画"（只有光标移动）或误按 CLR 后保存，
  * 画布 GRAM 是空的——与其存一张白纸，不如提示用户 */
-static uint8_t paint_save(void)
+static uint8_t paint_save(uint32_t *ms_out)
 {
     FIL f;
     UINT bw;
     uint16_t x, y, no;
     uint32_t ink = 0;                  /* 非白像素计数 */
+    uint32_t t0 = (uint32_t)xTaskGetTickCount();
     uint8_t ok = 1;
     uint8_t hdr[3] = { 'K', 'P', '1' };
     char path[16];
 
+    if (ms_out != NULL) *ms_out = 0;
     if (!fs_ensure()) return 0;
     no = next_img_no();
     path[0] = '0'; path[1] = ':'; path[2] = '/';
@@ -194,6 +201,8 @@ static uint8_t paint_save(void)
                    * 卷满则 FS 报错，用户需在 Files 删旧图 */
     }
     cursor_show();
+    if (ms_out != NULL)
+        *ms_out = (uint32_t)(xTaskGetTickCount() - t0) * portTICK_PERIOD_MS;
     return ok;
 }
 
@@ -347,23 +356,42 @@ void app_paint_handle(input_event_t *ev)
                 paint_clear();
             } else if (btn == 7) {
                 uint8_t r;
+                uint32_t ms;
 
-                /* 先显示 SAV 再保存：保存约 0.6s（W25Q 页编程物理时间 +
+                /* 先显示 SAV 再保存：保存约 2~4s（W25Q 擦写物理时间 +
                  * 位带 SPI 读写），无反馈的死等体验差；结束后按结果换
-                 * OK!/EMP/ERR（EMP = 画布全白，白纸不落盘） */
+                 * 耗时秒数/EMP/ERR（EMP = 画布全白，白纸不落盘）。
+                 * 耗时显示（如 3S/12S）兼作保存性能的诊断反馈 */
                 s_status = "SAV";
                 s_status_sec = 2;
                 toolbar_redraw();
-                r = paint_save();
-                if (r == 1)      { s_status = "OK!"; s_status_sec = 2; }
-                else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
-                else             { s_status = "ERR"; s_status_sec = 2; }
+                r = paint_save(&ms);
+                /* 保存阻塞期间积压的 EV_TICK 会在下方连续处理，把刚设的
+                 * 状态瞬间清零（"闪一下"）——先豁免若干 TICK，让状态
+                 * 至少停留 2 个真实秒 */
+                s_status_hold = 6;
+                if (r == 1) {
+                    uint8_t sec = (uint8_t)((ms + 500) / 1000);
+
+                    if (sec > 99) sec = 99;
+                    s_status_buf[0] = (char)('0' + sec / 10);
+                    s_status_buf[1] = (char)('0' + sec % 10);
+                    s_status_buf[2] = 'S';
+                    s_status_buf[3] = 0;
+                    s_status = s_status_buf;
+                    s_status_sec = 2;
+                } else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
+                else               { s_status = "ERR"; s_status_sec = 2; }
                 toolbar_redraw();
             }
         }
     } else if (ev->type == EV_TICK) {
-        /* 状态文字超时清除 */
-        if (s_status_sec > 0) {
+        /* 状态文字超时清除。保存阻塞期间积压的 EV_TICK 会在保存完成后
+         * 连续处理（间隔 <1s），若直接递减会把 OK!/秒数瞬间清掉——
+         * 先消耗豁免额度，让状态至少停留 2 个真实秒 */
+        if (s_status_hold > 0) {
+            s_status_hold--;
+        } else if (s_status_sec > 0) {
             s_status_sec--;
             if (s_status_sec == 0) {
                 s_status = "";

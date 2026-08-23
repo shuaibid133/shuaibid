@@ -45,15 +45,25 @@
 #define BB_MISO_PIN (1u << 14)
 #define BB_MOSI_PIN (1u << 15)
 
-/* 位延时：主频 72MHz 下 8 周期 ≈ 0.11us → 位周期约 0.4us（~2.5MHz SCK）。
+/* 位延时：主频 72MHz 下 8 周期 ≈ 0.11us（建立/低相位，保持短）。
  * 2026-08-19 曾用 60 NOP（~250kHz）：当时引脚还是 2MHz 弱驱动，SCK
- * 边沿畸变、采样点落临界区导致读 ID 前两字节错乱；后已改 50MHz 强驱动
- * （MODE=11）边沿干净，本次收回延时。W25Q128 规格支持 104MHz 读时钟，
- * 2.5MHz 余量充足。位带读/写 105KB 约 0.35s（原 60 NOP 时约 2.2s） */
+ * 边沿畸变、采样点落临界区导致读 ID 前两字节错乱；后已改 50MHz 强驱动。
+ * 2026-08-23：曾把全部延时收到 8 NOP（~2.5MHz），读数据正常，但擦除
+ * 等待（wait_busy 读状态寄存器）空转超时——本板 W25Q128 是克隆片，
+ * tV（MISO 输出有效延迟）远大于原厂典型值 7ns，0.11us 采样余量不足。
+ * 修复：只拉长上升沿后的采样余量（bb_delay_sample），SCK 仍 ~1.3MHz，
+ * 读 105KB 约 0.6s（60 NOP 版的 3.5 倍速），状态读取恢复稳定 */
 static void bb_delay(void)
 {
     uint8_t i;
     for (i = 0; i < 8; i++) { __NOP(); }
+}
+
+/* SCK 上升沿后：MISO 采样余量（覆盖克隆片大 tV，约 0.42us） */
+static void bb_delay_sample(void)
+{
+    uint8_t i;
+    for (i = 0; i < 30; i++) { __NOP(); }
 }
 
 /* 把 PB13/14/15 从 SPI2 复用改为 GPIO（CRH 直接写）：
@@ -84,8 +94,8 @@ static uint8_t bb_byte(uint8_t tx)
         bb_delay();
         BB_GPIOB_ODR &= ~BB_SCK_PIN;   /* 低半周期 */
         bb_delay();
-        BB_GPIOB_ODR |= BB_SCK_PIN;    /* 上升沿：Flash 在此时锁存 MOSI，MCU 采样 MISO */
-        bb_delay();
+        BB_GPIOB_ODR |= BB_SCK_PIN;    /* 上升沿：Flash 在此时锁存 MOSI */
+        bb_delay_sample();             /* 高相位 + MISO 采样余量 */
         rx = (uint8_t)((rx << 1) | ((BB_GPIOB_IDR & BB_MISO_PIN) ? 1u : 0u));
     }
     return rx;
