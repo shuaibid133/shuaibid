@@ -73,6 +73,7 @@ static const char *s_status = "";    /* 状态文字（"OK!"/"ERR"/"NEW"） */
 static uint8_t  s_status_sec = 0;    /* 状态文字剩余显示秒数 */
 static uint8_t  s_status_hold = 0;   /* 保存/加载后豁免的积压 TICK 数（防状态被秒清） */
 static char     s_status_buf[4];     /* 耗时秒数字符缓冲（如 "12S"） */
+static uint8_t  s_selftest_ok = 0;   /* 自检已通过：后续保存跳过（自检有真实擦写，很贵） */
 static uint8_t  s_line[SCR_W * 2];   /* 行缓冲 480B（保存/加载逐行读写） */
 
 /* ---------- 局部重绘保护（与桌面框架同协议） ---------- */
@@ -439,7 +440,8 @@ void app_paint_handle(input_event_t *ev)
                 s_status_sec = 2;
                 toolbar_redraw();
             retry:
-                t = fs_selftest();
+                t = 255;
+                if (!s_selftest_ok) t = fs_selftest();
                 if (t == 255 && attempt == 0) {
                     /* 底层写路径坏（擦除未完成时页编程被忽略，FAT 表/
                      * 目录随机损坏）：f_mkfs 重建卷（只写卷头几个块，
@@ -461,14 +463,18 @@ void app_paint_handle(input_event_t *ev)
                     s_status_sec = 2;
                     toolbar_redraw();
                 } else {
-                    /* 自检通过：T + 秒数 + !（如 T2!） */
-                    s_status_buf[0] = 'T';
-                    s_status_buf[1] = (char)('0' + t);
-                    s_status_buf[2] = '!';
-                    s_status_buf[3] = 0;
-                    s_status = s_status_buf;
-                    s_status_sec = 2;
-                    toolbar_redraw();
+                    if (!s_selftest_ok) {
+                        /* 首次自检通过：T + 秒数 + !（如 T6!），结果缓存，
+                         * 后续保存跳过自检（自检有真实擦写，克隆片很贵） */
+                        s_selftest_ok = 1;
+                        s_status_buf[0] = 'T';
+                        s_status_buf[1] = (char)('0' + t);
+                        s_status_buf[2] = '!';
+                        s_status_buf[3] = 0;
+                        s_status = s_status_buf;
+                        s_status_sec = 2;
+                        toolbar_redraw();
+                    }
                     r = paint_save(&ms);
                     /* 保存阻塞期间积压的 EV_TICK 会在下方连续处理，把
                      * 刚设的状态瞬间清零（"闪一下"）——豁免"保存秒数
@@ -485,7 +491,11 @@ void app_paint_handle(input_event_t *ev)
                         s_status = s_status_buf;
                         s_status_sec = 2;
                     } else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
-                    else               { s_status = "ERR"; s_status_sec = 2; }
+                    else {
+                        s_status = "ERR";
+                        s_status_sec = 2;
+                        s_selftest_ok = 0;   /* 落盘验证失败：下次保存重新自检 */
+                    }
                     toolbar_redraw();
                 }
             }

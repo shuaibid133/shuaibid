@@ -26,12 +26,32 @@ static uint8_t g_inited = 0;                 /* disk_initialize 结果缓存 */
 static uint8_t  s_cache[4096];
 static uint32_t s_cache_block = 0xFFFFFFFF;  /* 当前缓存的是哪个 4K 块（0xFFFFFFFF=空） */
 static uint8_t  s_cache_dirty = 0;           /* 缓存有新数据未落盘 */
+static uint8_t  s_cache_clean = 0;           /* 缓存内容全 0xFF：可直接页编程，无需擦除 */
+
+/* 把指定 4K 块读入缓存，并统计是否全 0xFF（干净块）。
+ * 2026-08-24 免擦优化：本板 W25Q128 是克隆片，4K 擦除实测 1.5~2s（原厂
+ * 规格 40-400ms），擦除次数直接决定保存耗时。页编程只能 1→0，若块已
+ * 全 0xFF（出厂状态/已擦过/写失败的残块），跳过擦除直接写，新建文件的
+ * 数据区几乎全是干净块 → 保存从 40s 级降到 4s 级 */
+static void cache_load(uint32_t blk)
+{
+    uint32_t i;
+    uint8_t clean = 1;
+
+    w25q128_read(blk * 4096, s_cache, 4096);
+    for (i = 0; i < 4096; i++) {
+        if (s_cache[i] != 0xFFu) { clean = 0; break; }
+    }
+    s_cache_clean = clean;
+    s_cache_block = blk;
+}
 
 static void cache_flush(void)
 {
     if (!s_cache_dirty) return;
-    w25q128_erase_sector(s_cache_block * 4096);
+    if (!s_cache_clean) w25q128_erase_sector(s_cache_block * 4096);
     w25q128_write(s_cache_block * 4096, s_cache, 4096);
+    s_cache_clean = 0;              /* 写过后块里已有数据（保守：下次需擦） */
     s_cache_dirty = 0;
 }
 
@@ -66,8 +86,7 @@ DRESULT disk_write(BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
 
         if (blk != s_cache_block) {
             cache_flush();                    /* 换块：旧块先落盘 */
-            w25q128_read(blk * 4096, s_cache, 4096);   /* 新块读入缓存（读-改-擦-写） */
-            s_cache_block = blk;
+            cache_load(blk);                  /* 新块读入缓存（读-改-擦-写，免擦优化） */
         }
         memcpy(s_cache + (s % BLOCK_SECTORS) * SECTOR_SIZE,
                buff + i * SECTOR_SIZE, SECTOR_SIZE);
