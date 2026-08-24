@@ -213,6 +213,6 @@ void w25q128_erase_sector(uint32_t addr)
     bb_byte(addr >> 8);
     bb_byte(addr);
     bb_cs_high();
-    wait_busy(400000);                       /* 4K 擦除典型 40ms，最坏 400ms；上限 400k 轮
-                                              * ≈ 3.4s 保险（克隆片擦除偏慢） */
+    wait_busy(800000);                       /* 4K 擦除典型 40ms，最坏 400ms；上限 800k 轮
+                                              * ≈ 6.8s 保险（克隆片擦除慢，防误判完成） */
 }

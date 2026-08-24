@@ -49,7 +49,11 @@ static void cache_load(uint32_t blk)
 static void cache_flush(void)
 {
     if (!s_cache_dirty) return;
-    if (!s_cache_clean) w25q128_erase_sector(s_cache_block * 4096);
+    /* 块 0 = 卷头（引导+FAT+根目录），文件系统骨架必须绝对正确：
+     * 永远擦除（免擦优化只用于数据块）。2026-08-24 曾出现保存后
+     * 所有文件消失（目录被破坏），怀疑免擦误判/页编程失败波及卷头 */
+    if (!s_cache_clean || s_cache_block == 0)
+        w25q128_erase_sector(s_cache_block * 4096);
     w25q128_write(s_cache_block * 4096, s_cache, 4096);
     s_cache_clean = 0;              /* 写过后块里已有数据（保守：下次需擦） */
     s_cache_dirty = 0;

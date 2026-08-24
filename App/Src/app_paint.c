@@ -173,6 +173,18 @@ static uint8_t fs_selftest(void)
     return (ms >= 9900) ? 9 : (uint8_t)(ms / 1000);
 }
 
+/* 统计根目录项数（目录骨架完整性验证用） */
+static uint16_t count_dir_entries(void)
+{
+    DIR dj;
+    FILINFO fi;
+    uint16_t n = 0;
+
+    if (f_opendir(&dj, "0:/") != FR_OK) return 0;
+    while (f_readdir(&dj, &fi) == FR_OK && fi.fname[0] != 0) n++;
+    return n;
+}
+
 /* 保存后落盘验证：读回整个文件统计非白像素，应与保存时统计一致。
  * 写失败的文件是纯 0xFF（白纸），ink 必然对不上——把"假保存"暴露出来。
  * 文件刚 f_close，FATFS 窗口已同步，读回走 disk_read 直读 flash */
@@ -234,6 +246,7 @@ static uint8_t paint_save(uint32_t *ms_out)
     FIL f;
     UINT bw;
     uint16_t x, y, no;
+    uint16_t n_before;
     uint32_t ink = 0;                  /* 非白像素计数 */
     uint32_t t0 = (uint32_t)xTaskGetTickCount();
     uint8_t ok = 1;
@@ -242,6 +255,7 @@ static uint8_t paint_save(uint32_t *ms_out)
 
     if (ms_out != NULL) *ms_out = 0;
     if (!fs_ensure()) return 0;
+    n_before = count_dir_entries();    /* 目录自检基准：保存后必须 +1 */
     no = next_img_no();
     path[0] = '0'; path[1] = ':'; path[2] = '/';
     path[3] = 'I'; path[4] = 'M'; path[5] = 'G';
@@ -280,6 +294,7 @@ static uint8_t paint_save(uint32_t *ms_out)
             ok = 2;
         } else if (ok) {
             if (!verify_file_ink(path, ink)) ok = 0;   /* 落盘验证：防"假保存"白文件 */
+            else if (count_dir_entries() <= n_before) ok = 0;  /* 目录骨架被破坏 */
         }
     } else {
         ok = 0;   /* 编号已占用或卷满：自动编号冲突理论不存在（刚扫过），
