@@ -154,7 +154,8 @@ static volatile uint16_t s_cur_note = 0; /* 当前音符下标（进度） */
 static volatile uint32_t s_elapsed_ms = 0;  /* 已播时长 */
 static volatile uint8_t  s_ui_dirty = 0;    /* 任务侧状态变化，主线程刷 UI */
 
-static uint8_t  s_row = 0;               /* 光标选中行 */
+static uint8_t  s_row = 0;               /* 光标选中行（UI 高亮） */
+static uint8_t  s_play_idx = 0;          /* 播放行：续播基于它，与选中行解耦 */
 static int8_t   s_btn = -1;              /* 按钮 hover：0=Prev 1=Next 2=Mode -1=无 */
 static uint8_t  s_mode = 0;              /* 播放模式：0=顺序循环 1=单曲循环 2=随机 */
 static uint32_t s_rnd = 0;               /* 随机播放的 LCG 状态 */
@@ -365,25 +366,29 @@ static int8_t hit_btn(uint16_t cx, uint16_t cy)
     return -1;
 }
 
-/* 切歌：s_song 指向 s_row 并从第一音播起 */
+/* 切歌：播放行 = 选中行，从第一音播起 */
 static void start_song(void)
 {
-    s_song = &s_songs[s_row];
+    s_play_idx = s_row;
+    s_song = &s_songs[s_play_idx];
     s_playing = 1;
     s_paused = 0;
     s_cur_note = 0;
     s_elapsed_ms = 0;
 }
 
-/* 分片延时：每 50ms 检查暂停/停止标志，响应快（不阻塞退出/暂停） */
-static void delay_check(uint32_t ms)
+/* 分片延时：每 50ms 检查暂停/停止/切歌，响应快（不阻塞退出/暂停/换歌）。
+ * expect = 延时开始时正在播的歌：换歌（s_song != expect）立即中断，
+ * 旧歌残余音符最多多响 50ms——否则切歌后旧歌会把当前音符放完（最长
+ * 几百 ms），屏幕已显示新歌名而耳朵里还是旧歌（名字与声音不符） */
+static void delay_check(uint32_t ms, const song_t *expect)
 {
     while (ms > 0) {
         uint32_t chunk = ms > 50 ? 50 : ms;
 
         vTaskDelay(pdMS_TO_TICKS(chunk));
         ms -= chunk;
-        if (s_paused || !s_playing) break;
+        if (s_paused || !s_playing || s_song != expect) break;
         s_elapsed_ms += chunk;
     }
 }
@@ -406,27 +411,29 @@ static void music_task(void *argument)
             if (s_song != sg || !s_playing || s_paused) break;
             s_cur_note = i;
             if (n != 0) { set_note((uint8_t)n); HAL_TIM_PWM_Start(&g_htim2, TIM_CHANNEL_2); }
-            delay_check(d);
+            delay_check(d, sg);
             HAL_TIM_PWM_Stop(&g_htim2, TIM_CHANNEL_2);
-            delay_check((uint32_t)d * GAP_RATIO / 10);   /* 间隙：同音分离 */
+            delay_check((uint32_t)d * GAP_RATIO / 10, sg);   /* 间隙：同音分离 */
             if (s_song != sg || !s_playing) break;
         }
 
         if (s_song == sg && s_playing && !s_paused) {
-            /* 整曲播完：按播放模式续播（s_playing 保持 1 直接接下一首） */
+            /* 整曲播完：按播放模式续播（s_playing 保持 1 直接接下一首）。
+             * 续播基于 s_play_idx（播放行）：s_row 只是 UI 选中行，播放中
+             * 光标移走不该影响"下一首是哪首" */
             if (s_mode == 0) {                    /* 顺序循环 */
-                s_row = (uint8_t)((s_row + 1) % SONG_N);
-                s_song = &s_songs[s_row];
+                s_play_idx = (uint8_t)((s_play_idx + 1) % SONG_N);
             } else if (s_mode == 1) {             /* 单曲循环：本曲重播 */
-                /* s_song 不变，清进度从头播 */
+                /* s_play_idx 不变，清进度从头播 */
             } else {                              /* 随机：LCG 伪随机，避开当前曲 */
                 if (s_rnd == 0) s_rnd = (uint32_t)xTaskGetTickCount();
                 s_rnd = s_rnd * 1103515245u + 12345u;
-                s_row = (uint8_t)(s_rnd % SONG_N);
-                if (s_row == (uint8_t)(sg - s_songs))
-                    s_row = (uint8_t)((s_row + 1) % SONG_N);
-                s_song = &s_songs[s_row];
+                s_play_idx = (uint8_t)(s_rnd % SONG_N);
+                if (s_play_idx == (uint8_t)(sg - s_songs))
+                    s_play_idx = (uint8_t)((s_play_idx + 1) % SONG_N);
             }
+            s_row = s_play_idx;                   /* 列表高亮跟随播放行 */
+            s_song = &s_songs[s_play_idx];
             s_cur_note = 0;
             s_elapsed_ms = 0;
             HAL_TIM_PWM_Stop(&g_htim2, TIM_CHANNEL_2);
@@ -507,7 +514,7 @@ void app_music_handle(input_event_t *ev)
             draw_btns();
         } else {
             /* SW 在列表：选中行 = 播放行 → 播放/暂停切换；否则切歌（从头播） */
-            if (s_song == &s_songs[s_row] && s_playing) {
+            if (s_play_idx == s_row && s_playing) {
                 s_paused = s_paused ? 0 : 1;   /* 任务 ≤50ms 内停/续音 */
             } else {
                 start_song();
