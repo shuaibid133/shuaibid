@@ -338,7 +338,11 @@ static void refresh_all(void)
 static void draw_btns(void)
 {
     static const char *const m[3] = { "MODE ALL", "MODE ONE", "MODE RND" };
-    uint8_t i;
+    uint8_t i, hid;
+
+    /* 与列表 hover 同协议：光标压在按钮区时先藏后画。否则 fill 蓝底
+     * 会把光标箭头盖掉——切模式/移入按钮时光标从屏幕消失且恢复错乱 */
+    hid = redraw_protect_begin(0, BTN_Y0, SCR_W - 1, BTN_Y0 + BTN_H - 1);
 
     for (i = 0; i < 3; i++) {
         uint16_t x0 = (i < 2) ? (uint16_t)(4 + i * (BTN_W0 + BTN_GAP))
@@ -357,6 +361,8 @@ static void draw_btns(void)
                                ATK_MD0280_LCD_FONT_16,
                                hov ? ATK_MD0280_WHITE : ATK_MD0280_BLACK);
     }
+
+    redraw_protect_end(hid);
 }
 
 /* 按钮命中：0=Prev 1=Next 2=Mode，未命中 -1 */
