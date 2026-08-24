@@ -49,10 +49,13 @@ static void cache_load(uint32_t blk)
 static void cache_flush(void)
 {
     if (!s_cache_dirty) return;
-    /* 块 0 = 卷头（引导+FAT+根目录），文件系统骨架必须绝对正确：
-     * 永远擦除（免擦优化只用于数据块）。2026-08-24 曾出现保存后
-     * 所有文件消失（目录被破坏），怀疑免擦误判/页编程失败波及卷头 */
-    if (!s_cache_clean || s_cache_block == 0)
+    /* 卷头块（0-3：引导+2×FAT+根目录）必须永远擦除：免擦优化只用于
+     * 数据块。FAT12 卷布局：扇区 0=引导，1-12=FAT1，13-24=FAT2，
+     * 25=根目录 → 4K 块 0-2=FAT，块 3=根目录+数据区开头。
+     * 实际上块 1-3 也不会被判"干净"（FAT 空闲项是 0x0000、根目录项
+     * 非 0xFF），不会触发免擦，但显式写块 0 条件更稳——文件系统骨架
+     * 绝不允许被"跳过擦除"赌运气 */
+    if (!s_cache_clean || s_cache_block < 4)
         w25q128_erase_sector(s_cache_block * 4096);
     w25q128_write(s_cache_block * 4096, s_cache, 4096);
     s_cache_clean = 0;              /* 写过后块里已有数据（保守：下次需擦） */

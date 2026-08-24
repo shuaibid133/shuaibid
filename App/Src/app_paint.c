@@ -35,6 +35,7 @@
 #include "cursor.h"
 #include "app_files.h"
 #include "ff.h"
+#include "diskio.h"   /* disk_read：fs_ensure 读引导扇区查根目录容量 */
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -74,6 +75,7 @@ static uint8_t  s_status_sec = 0;    /* 状态文字剩余显示秒数 */
 static uint8_t  s_status_hold = 0;   /* 保存/加载后豁免的积压 TICK 数（防状态被秒清） */
 static char     s_status_buf[4];     /* 耗时秒数字符缓冲（如 "12S"） */
 static uint8_t  s_selftest_ok = 0;   /* 自检已通过：后续保存跳过（自检有真实擦写，很贵） */
+static uint8_t  s_err_no = 0;        /* 最近一次保存的错误码（1=挂载 2=打开 3=写 4=落盘验证 5=目录破坏） */
 static uint8_t  s_line[SCR_W * 2];   /* 行缓冲 480B（保存/加载逐行读写） */
 
 /* ---------- 局部重绘保护（与桌面框架同协议） ---------- */
@@ -96,13 +98,33 @@ static uint8_t s_mkfs_work[4096];   /* f_mkfs 工作缓冲（必须 ≥ 4KB，FA
 
 static uint8_t fs_ensure(void)
 {
-    MKFS_PARM mpar = {FM_FAT, 0, 0, 0, 0};
+    /* 显式 512 项根目录（FAT12/16 参数第 4 个 = n_root）。2026-08-24 事故：
+     * 早期版本建过 16 项根的卷，最多存 14 张图（readme+data 占 2 项）。
+     * 目录写满后：自检 TMPT.TMP 创建失败 → 返回 255 → 旧代码无条件
+     * f_mkfs 清空整个卷 → "红笔保存后所有文件消失"（与颜色无关，只是
+     * 刚好是第 15 次保存）。重建卷一律用 512 项根 */
+    MKFS_PARM mpar = {FM_FAT, 0, 0, 512, 0};
 
-    if (f_mount(&g_fs, "0:", 1) == FR_OK) return 1;
-    /* 挂载失败 = 卷未格式化：建 FAT12 卷再挂（Files 已完成首次格式化时不会走到） */
-    if (f_mkfs("0:", &mpar, s_mkfs_work, sizeof(s_mkfs_work)) == FR_OK)
+    if (f_mount(&g_fs, "0:", 1) != FR_OK) {
+        /* 挂载失败 = 卷未格式化：建 FAT12 卷再挂 */
+        if (f_mkfs("0:", &mpar, s_mkfs_work, sizeof(s_mkfs_work)) != FR_OK)
+            return 0;
         return f_mount(&g_fs, "0:", 1) == FR_OK;
-    return 0;
+    }
+    /* 老卷升级检查：读引导扇区 BPB_RootEntCnt（偏移 17，小端 WORD）。
+     * 16 项 = 早期格式（定时炸弹），重建 512 项根的卷。已 512 项则不动 */
+    if (disk_read(0, s_mkfs_work, 0, 1) == RES_OK) {
+        uint16_t n_root = (uint16_t)s_mkfs_work[17]
+                        | ((uint16_t)s_mkfs_work[18] << 8);
+
+        if (n_root == 16) {
+            f_mount(NULL, "0:", 1);
+            if (f_mkfs("0:", &mpar, s_mkfs_work, sizeof(s_mkfs_work)) != FR_OK)
+                return 0;
+            return f_mount(&g_fs, "0:", 1) == FR_OK;
+        }
+    }
+    return 1;   /* 磁盘就绪（读引导扇区失败也按就绪处理，不阻塞保存） */
 }
 
 /* ---------- 画布 ---------- */
@@ -144,9 +166,11 @@ static uint8_t fs_selftest(void)
     uint32_t ms;
     uint16_t i;
     uint8_t ok = 1;
+    FRESULT res;
 
     for (i = 0; i < 4096; i++) s_mkfs_work[i] = (uint8_t)(0x5A + i);
-    if (f_open(&f, "0:/TMPT.TMP", FA_CREATE_NEW | FA_WRITE) == FR_OK) {
+    res = f_open(&f, "0:/TMPT.TMP", FA_CREATE_NEW | FA_WRITE);
+    if (res == FR_OK) {
         for (i = 0; i < 16 && ok; i++) {
             if (f_write(&f, s_mkfs_work + i * 256, 256, &bw) != FR_OK || bw != 256) ok = 0;
         }
@@ -167,7 +191,14 @@ static uint8_t fs_selftest(void)
                 if (s_mkfs_work[i] != (uint8_t)(0x5A + i)) { ok = 0; break; }
             }
         }
-    } else ok = 0;
+    } else if (res == FR_DENIED) {
+        /* 根目录满（老 16 项格式存 14 张图后）：存储没坏，绝不格式化。
+         * 2026-08-24 事故根因：这里曾返回 255 → 调用方无条件 f_mkfs →
+         * 全部文件被清空（用户实测"红笔保存后所有文件不见了"） */
+        return 254;
+    } else {
+        ok = 0;
+    }
     ms = (uint32_t)(xTaskGetTickCount() - t0) * portTICK_PERIOD_MS;
     if (!ok) return 255;
     return (ms >= 9900) ? 9 : (uint8_t)(ms / 1000);
@@ -254,7 +285,7 @@ static uint8_t paint_save(uint32_t *ms_out)
     char path[16];
 
     if (ms_out != NULL) *ms_out = 0;
-    if (!fs_ensure()) return 0;
+    if (!fs_ensure()) { s_err_no = 1; return 0; }
     n_before = count_dir_entries();    /* 目录自检基准：保存后必须 +1 */
     no = next_img_no();
     path[0] = '0'; path[1] = ':'; path[2] = '/';
@@ -266,7 +297,7 @@ static uint8_t paint_save(uint32_t *ms_out)
     path[13] = 0;
     cursor_hide();                       /* 光标不入画 */
     if (f_open(&f, path, FA_CREATE_NEW | FA_WRITE) == FR_OK) {
-        if (f_write(&f, hdr, 3, &bw) != FR_OK || bw != 3) ok = 0;
+        if (f_write(&f, hdr, 3, &bw) != FR_OK || bw != 3) { ok = 0; s_err_no = 3; }
         for (y = CANVAS_Y0; ok && y <= CANVAS_Y1; y++) {
             for (x = 0; x < SCR_W; x++) {
                 uint16_t c = atk_md0280_read_point(x, y);
@@ -275,7 +306,7 @@ static uint8_t paint_save(uint32_t *ms_out)
                 s_line[x * 2] = (uint8_t)(c & 0xFF);
                 s_line[x * 2 + 1] = (uint8_t)(c >> 8);
             }
-            if (f_write(&f, s_line, SCR_W * 2, &bw) != FR_OK || bw != SCR_W * 2) ok = 0;
+            if (f_write(&f, s_line, SCR_W * 2, &bw) != FR_OK || bw != SCR_W * 2) { ok = 0; s_err_no = 3; }
             if ((y & 0x0F) == 0x07) {
                 /* 每 16 行更新一次保存进度（克隆片擦除慢，给用户反馈避免"死机感"） */
                 uint8_t p = (uint8_t)(((y - CANVAS_Y0) * 100) / 220);
@@ -293,12 +324,13 @@ static uint8_t paint_save(uint32_t *ms_out)
             f_unlink(path);              /* 整幅白纸：删掉半成品，不留垃圾文件 */
             ok = 2;
         } else if (ok) {
-            if (!verify_file_ink(path, ink)) ok = 0;   /* 落盘验证：防"假保存"白文件 */
-            else if (count_dir_entries() <= n_before) ok = 0;  /* 目录骨架被破坏 */
+            if (!verify_file_ink(path, ink)) { ok = 0; s_err_no = 4; }  /* 落盘验证失败 */
+            else if (count_dir_entries() <= n_before) { ok = 0; s_err_no = 5; }  /* 目录被破坏 */
         }
     } else {
         ok = 0;   /* 编号已占用或卷满：自动编号冲突理论不存在（刚扫过），
                    * 卷满则 FS 报错，用户需在 Files 删旧图 */
+        s_err_no = 2;
     }
     cursor_show();
     if (ms_out != NULL)
@@ -459,6 +491,7 @@ void app_paint_handle(input_event_t *ev)
                 uint8_t t;
                 uint8_t attempt = 0;
                 uint32_t ms;
+                FIL ft;   /* FMT 前检查卷是否可读的探针文件句柄 */
 
                 /* 先显示 SAV 再保存：无反馈的死等体验差。
                  * 1) 自检（T2!）：写读删 4KB 临时文件，验证底层写路径；
@@ -470,24 +503,44 @@ void app_paint_handle(input_event_t *ev)
             retry:
                 t = 255;
                 if (!s_selftest_ok) t = fs_selftest();
-                if (t == 255 && attempt == 0) {
-                    /* 底层写路径坏（擦除未完成时页编程被忽略，FAT 表/
-                     * 目录随机损坏）：f_mkfs 重建卷（只写卷头几个块，
-                     * 不擦全片），旧文件全部作废 */
-                    MKFS_PARM mpar = { FM_FAT, 0, 0, 0, 0 };
-
-                    f_mount(NULL, "0:", 1);
-                    f_mkfs("0:", &mpar, s_mkfs_work, sizeof(s_mkfs_work));
-                    f_mount(&g_fs, "0:", 1);
-                    attempt = 1;
-                    s_status = "FMT";
+                if (t == 254) {
+                    /* 根目录满（老 16 项格式）：提示删图，绝不格式化。
+                     * 注意 s_selftest_ok 保持 0：满目录时自检必然失败，
+                     * 删掉几张图后下次保存重试即可恢复 */
+                    s_status = "FUL";
+                    s_status_hold = 6;   /* 自检阻塞积压的 TICK 会瞬间清掉状态 */
                     s_status_sec = 2;
                     toolbar_redraw();
-                    goto retry;
+                    return;
+                }
+                if (t == 255 && attempt == 0) {
+                    /* 自检失败 ≠ 卷坏。2026-08-24 事故：根目录满 → 自检
+                     * 失败 → 无条件 f_mkfs → 全部文件被清空。现在必须
+                     * 已存在的 README.TXT 也打不开（卷真不可读）才重建；
+                     * 能打开 = 卷还活着，只是瞬时故障 → 落到下方 E8 提示 */
+                    if (f_open(&ft, "0:/README.TXT", FA_READ) != FR_OK) {
+                        MKFS_PARM mpar = { FM_FAT, 0, 0, 512, 0 };
+
+                        f_mount(NULL, "0:", 1);
+                        f_mkfs("0:", &mpar, s_mkfs_work, sizeof(s_mkfs_work));
+                        f_mount(&g_fs, "0:", 1);
+                        attempt = 1;
+                        s_status = "FMT";
+                        s_status_sec = 2;
+                        toolbar_redraw();
+                        goto retry;
+                    }
+                    f_close(&ft);
                 }
                 if (t == 255) {
+                    /* E8 = 自检失败但卷可读（瞬时故障）：不格式化不丢数据，
+                     * 下次保存重试自检。t 可能为 254 的情况在 retry 入口已
+                     * 拦截，这里只剩真 255 */
+                    s_status_buf[0] = 'E';
+                    s_status_buf[1] = '8';
+                    s_status_buf[2] = 0;
+                    s_status = s_status_buf;
                     s_status_hold = 6;
-                    s_status = "ERR";
                     s_status_sec = 2;
                     toolbar_redraw();
                 } else {
@@ -499,6 +552,22 @@ void app_paint_handle(input_event_t *ev)
                         s_status_buf[1] = (char)('0' + t);
                         s_status_buf[2] = '!';
                         s_status_buf[3] = 0;
+                        s_status = s_status_buf;
+                        s_status_sec = 2;
+                        toolbar_redraw();
+                    } else {
+                        /* 显示 P + 保存前文件数（诊断：根目录是否快满） */
+                        uint16_t n0 = count_dir_entries();
+
+                        s_status_buf[0] = 'P';
+                        if (n0 >= 10) {
+                            s_status_buf[1] = (char)('0' + n0 / 10);
+                            s_status_buf[2] = (char)('0' + n0 % 10);
+                            s_status_buf[3] = 0;
+                        } else {
+                            s_status_buf[1] = (char)('0' + n0);
+                            s_status_buf[2] = 0;
+                        }
                         s_status = s_status_buf;
                         s_status_sec = 2;
                         toolbar_redraw();
@@ -520,7 +589,13 @@ void app_paint_handle(input_event_t *ev)
                         s_status_sec = 2;
                     } else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
                     else {
-                        s_status = "ERR";
+                        /* 精确错误码（E1-E5），配合 P 值诊断"保存后文件消失"：
+                         * E1=挂载失败  E2=打开失败  E3=写入失败
+                         * E4=落盘验证失败  E5=目录破坏 */
+                        s_status_buf[0] = 'E';
+                        s_status_buf[1] = (char)('0' + s_err_no);
+                        s_status_buf[2] = 0;
+                        s_status = s_status_buf;
                         s_status_sec = 2;
                         s_selftest_ok = 0;   /* 落盘验证失败：下次保存重新自检 */
                     }
