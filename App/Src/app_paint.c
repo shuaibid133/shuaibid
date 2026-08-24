@@ -77,8 +77,6 @@ static uint8_t  s_status_hold = 0;   /* 保存/加载后豁免的积压 TICK 数
 static char     s_status_buf[4];     /* 耗时秒数字符缓冲（如 "12S"） */
 static uint8_t  s_selftest_ok = 0;   /* 自检已通过：后续保存跳过（自检有真实擦写，很贵） */
 static uint8_t  s_err_no = 0;        /* 最近一次保存的错误码（1=挂载 2=打开 3=写 4=落盘验证 5=目录破坏） */
-static uint8_t  s_show_erase = 0;    /* 秒数显示完后接着显示本次擦除块数（诊断） */
-static uint16_t s_erase_diff = 0;    /* 本次保存的 4K 擦除块数 */
 static uint8_t  s_line[SCR_W * 2];   /* 行缓冲 480B（保存/加载逐行读写） */
 
 /* ---------- 局部重绘保护（与桌面框架同协议） ---------- */
@@ -289,7 +287,6 @@ static uint8_t paint_save(uint32_t *ms_out)
     uint16_t n_before;
     uint32_t ink = 0;                  /* 非白像素计数 */
     uint32_t t0 = (uint32_t)xTaskGetTickCount();
-    uint32_t e0 = diskio_erase_count();   /* 擦除计数基准（保存耗时诊断） */
     uint8_t ok = 1;
     uint8_t hdr[3] = { 'K', 'P', '1' };
     char path[16];
@@ -343,7 +340,6 @@ static uint8_t paint_save(uint32_t *ms_out)
         s_err_no = 2;
     }
     cursor_show();
-    s_erase_diff = (uint16_t)(diskio_erase_count() - e0);   /* 本次保存擦除块数 */
     if (ms_out != NULL)
         *ms_out = (uint32_t)(xTaskGetTickCount() - t0) * portTICK_PERIOD_MS;
     return ok;
@@ -577,22 +573,6 @@ void app_paint_handle(input_event_t *ev)
                         s_status = s_status_buf;
                         s_status_sec = 2;
                         toolbar_redraw();
-                    } else {
-                        /* 显示 P + 保存前文件数（诊断：根目录是否快满） */
-                        uint16_t n0 = count_dir_entries();
-
-                        s_status_buf[0] = 'P';
-                        if (n0 >= 10) {
-                            s_status_buf[1] = (char)('0' + n0 / 10);
-                            s_status_buf[2] = (char)('0' + n0 % 10);
-                            s_status_buf[3] = 0;
-                        } else {
-                            s_status_buf[1] = (char)('0' + n0);
-                            s_status_buf[2] = 0;
-                        }
-                        s_status = s_status_buf;
-                        s_status_sec = 2;
-                        toolbar_redraw();
                     }
                     r = paint_save(&ms);
                     /* 保存阻塞期间积压的 EV_TICK 会在下方连续处理，把
@@ -609,8 +589,7 @@ void app_paint_handle(input_event_t *ev)
                         s_status_buf[3] = 0;
                         s_status = s_status_buf;
                         s_status_sec = 2;
-                        s_show_erase = 1;   /* 秒数显示完 → 接显示擦除块数 */
-                    } else if (r == 2) { s_status = "EMP"; s_status_sec = 2; s_show_erase = 0; }
+                    } else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
                     else {
                         /* 精确错误码（E1-E5），配合 P 值诊断"保存后文件消失"：
                          * E1=挂载失败  E2=打开失败  E3=写入失败
@@ -620,7 +599,6 @@ void app_paint_handle(input_event_t *ev)
                         s_status_buf[2] = 0;
                         s_status = s_status_buf;
                         s_status_sec = 2;
-                        s_show_erase = 0;
                         s_selftest_ok = 0;   /* 落盘验证失败：下次保存重新自检 */
                     }
                     toolbar_redraw();
@@ -636,22 +614,8 @@ void app_paint_handle(input_event_t *ev)
         } else if (s_status_sec > 0) {
             s_status_sec--;
             if (s_status_sec == 0) {
-                if (s_show_erase) {
-                    /* 保存秒数显示完 → 接显示本次擦除块数（如 23E）：
-                     * 诊断 35S 级慢保存是擦除太多还是写入本身慢 */
-                    uint16_t e = s_erase_diff;
-
-                    s_show_erase = 0;
-                    s_status_buf[0] = (char)('0' + e / 10);
-                    s_status_buf[1] = (char)('0' + e % 10);
-                    s_status_buf[2] = 'E';
-                    s_status_buf[3] = 0;
-                    s_status = s_status_buf;
-                    s_status_sec = 2;
-                } else {
-                    s_status = "";
-                    toolbar_redraw();
-                }
+                s_status = "";
+                toolbar_redraw();
             }
         }
     }
