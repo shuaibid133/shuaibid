@@ -501,8 +501,16 @@ void app_paint_handle(input_event_t *ev)
                 s_status_sec = 2;
                 toolbar_redraw();
             retry:
-                t = 255;
-                if (!s_selftest_ok) t = fs_selftest();
+                if (!s_selftest_ok) {
+                    t = fs_selftest();   /* 0-9 秒 / 254=根目录满 / 255=失败 */
+                } else {
+                    t = 0;   /* 自检已缓存通过（本会话真实擦写过）：跳过，
+                              * 直接保存。2026-08-24 修复：原来 t 先置 255
+                              * 再按条件覆盖，跳过自检时 t 恒 255 → 每次都
+                              * 被误判为"自检失败"→ E8（实测：黑笔保存后
+                              * 其他颜色全部 E8）；旧代码更糟，会走 FMT 清空
+                              * 整个卷——"保存后文件全消失"的另一只帮凶 */
+                }
                 if (t == 254) {
                     /* 根目录满（老 16 项格式）：提示删图，绝不格式化。
                      * 注意 s_selftest_ok 保持 0：满目录时自检必然失败，
@@ -525,6 +533,7 @@ void app_paint_handle(input_event_t *ev)
                         f_mkfs("0:", &mpar, s_mkfs_work, sizeof(s_mkfs_work));
                         f_mount(&g_fs, "0:", 1);
                         attempt = 1;
+                        s_selftest_ok = 0;   /* 卷已重建：重跑自检验证新卷 */
                         s_status = "FMT";
                         s_status_sec = 2;
                         toolbar_redraw();
