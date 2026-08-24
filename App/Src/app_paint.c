@@ -260,6 +260,17 @@ static uint8_t paint_save(uint32_t *ms_out)
                 s_line[x * 2 + 1] = (uint8_t)(c >> 8);
             }
             if (f_write(&f, s_line, SCR_W * 2, &bw) != FR_OK || bw != SCR_W * 2) ok = 0;
+            if ((y & 0x0F) == 0x07) {
+                /* 每 16 行更新一次保存进度（克隆片擦除慢，给用户反馈避免"死机感"） */
+                uint8_t p = (uint8_t)(((y - CANVAS_Y0) * 100) / 220);
+
+                s_status_buf[0] = (char)('0' + p / 10);
+                s_status_buf[1] = (char)('0' + p % 10);
+                s_status_buf[2] = '%';
+                s_status_buf[3] = 0;
+                s_status = s_status_buf;
+                draw_status_area();          /* 光标已在 paint_save 开头隐藏，安全 */
+            }
         }
         f_close(&f);
         if (ok && ink == 0) {
