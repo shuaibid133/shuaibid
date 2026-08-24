@@ -127,6 +127,75 @@ static void paint_clear(void)
 
 /* ---------- 保存 ---------- */
 
+/* 存储自检：写/读/删一个 4KB 临时文件，验证数据真实落盘 + 计时。
+ * 返回：0-9 = 自检耗时秒数（数据读写正确）；255 = 失败（数据错/打不开）
+ * 背景：本板 W25Q128 是克隆片，曾出现"保存成功但文件全 0xFF"——FATFS
+ * 层不报错，但擦除未完成时页编程命令被芯片忽略，目录项/FAT 表/数据
+ * 随机写失败。自检在保存前用真实文件系统路径验证底层写路径，避免把
+ * 坏数据写进正式文件；失败时由调用方重建卷（f_mkfs）后重试 */
+static uint8_t fs_selftest(void)
+{
+    FIL f;
+    UINT bw, br;
+    uint32_t t0 = (uint32_t)xTaskGetTickCount();
+    uint32_t ms;
+    uint16_t i;
+    uint8_t ok = 1;
+
+    for (i = 0; i < 4096; i++) s_mkfs_work[i] = (uint8_t)(0x5A + i);
+    if (f_open(&f, "0:/TMPT.TMP", FA_CREATE_NEW | FA_WRITE) == FR_OK) {
+        for (i = 0; i < 16 && ok; i++) {
+            if (f_write(&f, s_mkfs_work + i * 256, 256, &bw) != FR_OK || bw != 256) ok = 0;
+        }
+        f_close(&f);
+        if (ok) {
+            if (f_open(&f, "0:/TMPT.TMP", FA_READ) == FR_OK) {
+                uint16_t n;
+
+                for (n = 0; n < 4096 && ok; n += 256) {
+                    if (f_read(&f, s_mkfs_work + n, 256, &br) != FR_OK || br != 256) ok = 0;
+                }
+                f_close(&f);
+            } else ok = 0;
+        }
+        f_unlink("0:/TMPT.TMP");
+        if (ok) {
+            for (i = 0; i < 4096; i++) {
+                if (s_mkfs_work[i] != (uint8_t)(0x5A + i)) { ok = 0; break; }
+            }
+        }
+    } else ok = 0;
+    ms = (uint32_t)(xTaskGetTickCount() - t0) * portTICK_PERIOD_MS;
+    if (!ok) return 255;
+    return (ms >= 9900) ? 9 : (uint8_t)(ms / 1000);
+}
+
+/* 保存后落盘验证：读回整个文件统计非白像素，应与保存时统计一致。
+ * 写失败的文件是纯 0xFF（白纸），ink 必然对不上——把"假保存"暴露出来。
+ * 文件刚 f_close，FATFS 窗口已同步，读回走 disk_read 直读 flash */
+static uint8_t verify_file_ink(const char *path, uint32_t ink)
+{
+    FIL f;
+    UINT br;
+    uint16_t x, y;
+    uint32_t ink2 = 0;
+
+    if (f_open(&f, path, FA_READ) != FR_OK) return 0;
+    if (f_lseek(&f, 3) != FR_OK) { f_close(&f); return 0; }
+    for (y = 0; y < 220; y++) {
+        if (f_read(&f, s_line, SCR_W * 2, &br) != FR_OK || br != SCR_W * 2) {
+            f_close(&f); return 0;
+        }
+        for (x = 0; x < SCR_W; x++) {
+            uint16_t d = (uint16_t)s_line[x * 2] | ((uint16_t)s_line[x * 2 + 1] << 8);
+
+            if (d != ATK_MD0280_WHITE) ink2++;
+        }
+    }
+    f_close(&f);
+    return ink2 == ink;
+}
+
 /* 扫描根目录找最大 IMGxxx.IMG 编号，返回下一个（1..999，999 后回 1） */
 static uint16_t next_img_no(void)
 {
@@ -195,6 +264,8 @@ static uint8_t paint_save(uint32_t *ms_out)
         if (ok && ink == 0) {
             f_unlink(path);              /* 整幅白纸：删掉半成品，不留垃圾文件 */
             ok = 2;
+        } else if (ok) {
+            if (!verify_file_ink(path, ink)) ok = 0;   /* 落盘验证：防"假保存"白文件 */
         }
     } else {
         ok = 0;   /* 编号已占用或卷满：自动编号冲突理论不存在（刚扫过），
@@ -356,33 +427,67 @@ void app_paint_handle(input_event_t *ev)
                 paint_clear();
             } else if (btn == 7) {
                 uint8_t r;
+                uint8_t t;
+                uint8_t attempt = 0;
                 uint32_t ms;
 
-                /* 先显示 SAV 再保存：保存约 2~4s（W25Q 擦写物理时间 +
-                 * 位带 SPI 读写），无反馈的死等体验差；结束后按结果换
-                 * 耗时秒数/EMP/ERR（EMP = 画布全白，白纸不落盘）。
-                 * 耗时显示（如 3S/12S）兼作保存性能的诊断反馈 */
+                /* 先显示 SAV 再保存：无反馈的死等体验差。
+                 * 1) 自检（T2!）：写读删 4KB 临时文件，验证底层写路径；
+                 *    失败 → 重建卷（FMT）→ 重试一次，再失败 → ERR。
+                 * 2) 正式保存：耗时显示（如 3S/12S）兼作性能诊断 */
                 s_status = "SAV";
                 s_status_sec = 2;
                 toolbar_redraw();
-                r = paint_save(&ms);
-                /* 保存阻塞期间积压的 EV_TICK 会在下方连续处理，把刚设的
-                 * 状态瞬间清零（"闪一下"）——先豁免若干 TICK，让状态
-                 * 至少停留 2 个真实秒 */
-                s_status_hold = 6;
-                if (r == 1) {
-                    uint8_t sec = (uint8_t)((ms + 500) / 1000);
+            retry:
+                t = fs_selftest();
+                if (t == 255 && attempt == 0) {
+                    /* 底层写路径坏（擦除未完成时页编程被忽略，FAT 表/
+                     * 目录随机损坏）：f_mkfs 重建卷（只写卷头几个块，
+                     * 不擦全片），旧文件全部作废 */
+                    MKFS_PARM mpar = { FM_FAT, 0, 0, 0, 0 };
 
-                    if (sec > 99) sec = 99;
-                    s_status_buf[0] = (char)('0' + sec / 10);
-                    s_status_buf[1] = (char)('0' + sec % 10);
-                    s_status_buf[2] = 'S';
+                    f_mount(NULL, "0:", 1);
+                    f_mkfs("0:", &mpar, s_mkfs_work, sizeof(s_mkfs_work));
+                    f_mount(&g_fs, "0:", 1);
+                    attempt = 1;
+                    s_status = "FMT";
+                    s_status_sec = 2;
+                    toolbar_redraw();
+                    goto retry;
+                }
+                if (t == 255) {
+                    s_status_hold = 6;
+                    s_status = "ERR";
+                    s_status_sec = 2;
+                    toolbar_redraw();
+                } else {
+                    /* 自检通过：T + 秒数 + !（如 T2!） */
+                    s_status_buf[0] = 'T';
+                    s_status_buf[1] = (char)('0' + t);
+                    s_status_buf[2] = '!';
                     s_status_buf[3] = 0;
                     s_status = s_status_buf;
                     s_status_sec = 2;
-                } else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
-                else               { s_status = "ERR"; s_status_sec = 2; }
-                toolbar_redraw();
+                    toolbar_redraw();
+                    r = paint_save(&ms);
+                    /* 保存阻塞期间积压的 EV_TICK 会在下方连续处理，把
+                     * 刚设的状态瞬间清零（"闪一下"）——豁免"保存秒数
+                     * + 2"，保证状态至少停留 2 个真实秒 */
+                    s_status_hold = (uint8_t)((ms / 1000) + 2);
+                    if (r == 1) {
+                        uint8_t sec = (uint8_t)((ms + 500) / 1000);
+
+                        if (sec > 99) sec = 99;
+                        s_status_buf[0] = (char)('0' + sec / 10);
+                        s_status_buf[1] = (char)('0' + sec % 10);
+                        s_status_buf[2] = 'S';
+                        s_status_buf[3] = 0;
+                        s_status = s_status_buf;
+                        s_status_sec = 2;
+                    } else if (r == 2) { s_status = "EMP"; s_status_sec = 2; }
+                    else               { s_status = "ERR"; s_status_sec = 2; }
+                    toolbar_redraw();
+                }
             }
         }
     } else if (ev->type == EV_TICK) {
