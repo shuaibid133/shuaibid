@@ -48,22 +48,23 @@
 /* 位延时：主频 72MHz 下 8 周期 ≈ 0.11us（建立/低相位，保持短）。
  * 2026-08-19 曾用 60 NOP（~250kHz）：当时引脚还是 2MHz 弱驱动，SCK
  * 边沿畸变、采样点落临界区导致读 ID 前两字节错乱；后已改 50MHz 强驱动。
- * 2026-08-23：曾把全部延时收到 8 NOP（~2.5MHz），读数据正常，但擦除
- * 等待（wait_busy 读状态寄存器）空转超时——本板 W25Q128 是克隆片，
- * tV（MISO 输出有效延迟）远大于原厂典型值 7ns，0.11us 采样余量不足。
- * 修复：只拉长上升沿后的采样余量（bb_delay_sample），SCK 仍 ~1.3MHz，
- * 读 105KB 约 0.6s（60 NOP 版的 3.5 倍速），状态读取恢复稳定 */
+ * 2026-08-23 实测三个采样余量点（克隆片 JEDEC 00522118，tV 远大于原厂）：
+ *   60 NOP（0.83us）→ 状态读取正确（保存成功、内容正确）
+ *    8 NOP（0.11us）→ 状态读取错（WIP 假 1，擦除等待超时，保存 20s 且白纸）
+ *   30 NOP（0.42us）→ 仍然错（说明克隆片 tV 在 0.42~0.83us 之间）
+ * 修复：采样余量固定回 60 NOP（已验证可靠点），建立/低相位仍用 8 NOP
+ * 保持短 —— SCK ~1MHz，读 105KB 约 0.5s（仍是 60 NOP 全速版的 4 倍） */
 static void bb_delay(void)
 {
     uint8_t i;
     for (i = 0; i < 8; i++) { __NOP(); }
 }
 
-/* SCK 上升沿后：MISO 采样余量（覆盖克隆片大 tV，约 0.42us） */
+/* SCK 上升沿后：MISO 采样余量（约 0.83us，覆盖克隆片大 tV） */
 static void bb_delay_sample(void)
 {
     uint8_t i;
-    for (i = 0; i < 30; i++) { __NOP(); }
+    for (i = 0; i < 60; i++) { __NOP(); }
 }
 
 /* 把 PB13/14/15 从 SPI2 复用改为 GPIO（CRH 直接写）：
@@ -195,7 +196,8 @@ void w25q128_write(uint32_t addr, const uint8_t *buf, uint32_t n)
         bb_byte(addr);
         for (i = 0; i < k; i++) bb_byte(buf[i]);
         bb_cs_high();
-        wait_busy(30000);                    /* 页编程典型 3ms，余量足够 */
+        wait_busy(60000);                    /* 页编程典型 3ms；上限 60k 轮 ≈ 0.5s 保险
+                                              * （克隆片慢 + 防状态读取抖动） */
         addr += k;
         buf += k;
         n -= k;
@@ -211,5 +213,6 @@ void w25q128_erase_sector(uint32_t addr)
     bb_byte(addr >> 8);
     bb_byte(addr);
     bb_cs_high();
-    wait_busy(200000);                       /* 4K 擦除典型 40ms，最坏 400ms，留足余量 */
+    wait_busy(400000);                       /* 4K 擦除典型 40ms，最坏 400ms；上限 400k 轮
+                                              * ≈ 3.4s 保险（克隆片擦除偏慢） */
 }
