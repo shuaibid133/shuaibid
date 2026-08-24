@@ -12,5 +12,6 @@ uint32_t w25q128_read_id(void);                    /* JEDEC ID（W25Q128 = 0xEF4
 void     w25q128_read(uint32_t addr, uint8_t *buf, uint32_t n);               /* 连续读，无页限制 */
 void     w25q128_write(uint32_t addr, const uint8_t *buf, uint32_t n);        /* 自动切 256B 页写 */
 void     w25q128_erase_sector(uint32_t addr);      /* 4KB 扇区擦除（addr 需 4K 对齐） */
+void     w25q128_chip_erase(void);                 /* 全片擦除（重建卷前用，擦完须重新 f_mkfs） */
 
 #endif

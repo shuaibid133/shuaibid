@@ -22,6 +22,8 @@
 
 static uint8_t g_inited = 0;                 /* disk_initialize 结果缓存 */
 
+static uint32_t s_erase_total = 0;           /* 累计 4K 擦除次数（保存性能诊断） */
+
 /* 4K 写缓存 */
 static uint8_t  s_cache[4096];
 static uint32_t s_cache_block = 0xFFFFFFFF;  /* 当前缓存的是哪个 4K 块（0xFFFFFFFF=空） */
@@ -55,8 +57,10 @@ static void cache_flush(void)
      * 实际上块 1-3 也不会被判"干净"（FAT 空闲项是 0x0000、根目录项
      * 非 0xFF），不会触发免擦，但显式写块 0 条件更稳——文件系统骨架
      * 绝不允许被"跳过擦除"赌运气 */
-    if (!s_cache_clean || s_cache_block < 4)
+    if (!s_cache_clean || s_cache_block < 4) {
         w25q128_erase_sector(s_cache_block * 4096);
+        s_erase_total++;
+    }
     w25q128_write(s_cache_block * 4096, s_cache, 4096);
     s_cache_clean = 0;              /* 写过后块里已有数据（保守：下次需擦） */
     s_cache_dirty = 0;
@@ -122,4 +126,21 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
         return RES_OK;
     }
     return RES_PARERR;
+}
+
+/* 累计 4K 擦除次数（Paint 保存性能诊断：35S 级慢保存是擦除太多
+ * 还是写入本身慢，用"本次保存擦除块数"一测便知） */
+uint32_t diskio_erase_count(void)
+{
+    return s_erase_total;
+}
+
+/* 全片擦除（重建卷）后调用：4K 缓存里的旧块内容已作废，必须置空
+ * 强制下次 disk_write 重新 cache_load。否则缓存脏块会被当作"当前
+ * 块"继续累加，flush 时把旧数据写回刚擦过的块 → 卷头损坏 */
+void diskio_cache_invalidate(void)
+{
+    s_cache_block = 0xFFFFFFFF;
+    s_cache_dirty = 0;
+    s_cache_clean = 0;
 }
