@@ -45,6 +45,11 @@
 #define SONG_ROW_H 30
 #define SONG_N     6
 #define STAT_Y0    234               /* 播放状态区 234..292 */
+#define BTN_Y0     294               /* 底部按钮区 294..316：Prev/Next/Mode */
+#define BTN_H      22
+#define BTN_W0     66                /* Prev/Next 按钮宽 */
+#define BTN_W2     92                /* MODE 按钮宽（模式名 8 字符 64px） */
+#define BTN_GAP    5
 #define GAP_RATIO  3                 /* 音符间隙 = 时长×3/10（1.3× 惯例） */
 
 /* ---------- 音符频率表：半音索引 → 频率（0=休止，C4 起 4 个八度） ---------- */
@@ -150,6 +155,9 @@ static volatile uint32_t s_elapsed_ms = 0;  /* 已播时长 */
 static volatile uint8_t  s_ui_dirty = 0;    /* 任务侧状态变化，主线程刷 UI */
 
 static uint8_t  s_row = 0;               /* 光标选中行 */
+static int8_t   s_btn = -1;              /* 按钮 hover：0=Prev 1=Next 2=Mode -1=无 */
+static uint8_t  s_mode = 0;              /* 播放模式：0=顺序循环 1=单曲循环 2=随机 */
+static uint32_t s_rnd = 0;               /* 随机播放的 LCG 状态 */
 static TaskHandle_t s_task = NULL;
 static TIM_HandleTypeDef g_htim2;
 
@@ -322,6 +330,51 @@ static void refresh_all(void)
     draw_status();
 }
 
+/* 底部按钮区：Prev / Next / Mode（hover 蓝底白字，MODE 显示当前模式） */
+static void draw_btns(void)
+{
+    static const char *const m[3] = { "MODE ALL", "MODE ONE", "MODE RND" };
+    uint8_t i;
+
+    for (i = 0; i < 3; i++) {
+        uint16_t x0 = (i < 2) ? (uint16_t)(4 + i * (BTN_W0 + BTN_GAP))
+                              : (uint16_t)(4 + 2 * (BTN_W0 + BTN_GAP));
+        uint16_t w = (i < 2) ? BTN_W0 : BTN_W2;
+        uint16_t x1 = (uint16_t)(x0 + w - 1);
+        uint8_t  hov = (s_btn == i);
+        const char *txt;
+
+        if (i == 2) txt = m[s_mode];
+        else        txt = (i == 0) ? "<< Prev" : "Next >>";
+
+        atk_md0280_fill(x0, BTN_Y0, x1, BTN_Y0 + BTN_H - 1,
+                        hov ? ATK_MD0280_BLUE : ATK_MD0280_WHITE);
+        atk_md0280_show_string(x0 + 5, BTN_Y0 + 3, w - 10, 16, (char *)txt,
+                               ATK_MD0280_LCD_FONT_16,
+                               hov ? ATK_MD0280_WHITE : ATK_MD0280_BLACK);
+    }
+}
+
+/* 按钮命中：0=Prev 1=Next 2=Mode，未命中 -1 */
+static int8_t hit_btn(uint16_t cx, uint16_t cy)
+{
+    if (cy < BTN_Y0 || cy > BTN_Y0 + BTN_H - 1) return -1;
+    if (cx >= 4 && cx <= 4 + BTN_W0 - 1) return 0;
+    if (cx >= 4 + BTN_W0 + BTN_GAP && cx <= 4 + BTN_W0 + BTN_GAP + BTN_W0 - 1) return 1;
+    if (cx >= 4 + 2 * (BTN_W0 + BTN_GAP) && cx <= 4 + 2 * (BTN_W0 + BTN_GAP) + BTN_W2 - 1) return 2;
+    return -1;
+}
+
+/* 切歌：s_song 指向 s_row 并从第一音播起 */
+static void start_song(void)
+{
+    s_song = &s_songs[s_row];
+    s_playing = 1;
+    s_paused = 0;
+    s_cur_note = 0;
+    s_elapsed_ms = 0;
+}
+
 /* 分片延时：每 50ms 检查暂停/停止标志，响应快（不阻塞退出/暂停） */
 static void delay_check(uint32_t ms)
 {
@@ -360,9 +413,20 @@ static void music_task(void *argument)
         }
 
         if (s_song == sg && s_playing && !s_paused) {
-            /* 整曲播完：自动停止，通知主线程刷 UI */
-            s_playing = 0;
-            s_paused = 0;
+            /* 整曲播完：按播放模式续播（s_playing 保持 1 直接接下一首） */
+            if (s_mode == 0) {                    /* 顺序循环 */
+                s_row = (uint8_t)((s_row + 1) % SONG_N);
+                s_song = &s_songs[s_row];
+            } else if (s_mode == 1) {             /* 单曲循环：本曲重播 */
+                /* s_song 不变，清进度从头播 */
+            } else {                              /* 随机：LCG 伪随机，避开当前曲 */
+                if (s_rnd == 0) s_rnd = (uint32_t)xTaskGetTickCount();
+                s_rnd = s_rnd * 1103515245u + 12345u;
+                s_row = (uint8_t)(s_rnd % SONG_N);
+                if (s_row == (uint8_t)(sg - s_songs))
+                    s_row = (uint8_t)((s_row + 1) % SONG_N);
+                s_song = &s_songs[s_row];
+            }
             s_cur_note = 0;
             s_elapsed_ms = 0;
             HAL_TIM_PWM_Stop(&g_htim2, TIM_CHANNEL_2);
@@ -379,12 +443,14 @@ void app_music_open(void)
 
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
     app_draw_title("Music");
-    atk_md0280_show_string(16, 28, 220, 12, (char *)"SW=Play/Pause  K1=Exit",
+    atk_md0280_show_string(16, 28, 220, 12, (char *)"SW=Play/Pause  Btns below",
                            ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
 
     s_row = 0;
+    s_btn = -1;
     for (i = 0; i < SONG_N; i++) draw_row(i, i == s_row);
     draw_status();
+    draw_btns();
 
     music_pwm_init();   /* 每次进入都重配 PA1 为 AF（close 会把它切回推挽输出，
                          * 若只在第一次初始化，第二次进入后 PWM 出不到引脚）
@@ -402,6 +468,7 @@ void app_music_handle(input_event_t *ev)
     if (ev->type == EV_MOUSE_MOVE) {
         uint16_t cx, cy;
         uint8_t row, hid;
+        int8_t b;
 
         cursor_get_pos(&cx, &cy);
         if (cy >= SONG_Y0 && cy <= SONG_Y0 + SONG_N * SONG_ROW_H - 3) {
@@ -417,18 +484,36 @@ void app_music_handle(input_event_t *ev)
                 redraw_protect_end(hid);
             }
         }
-    } else if (ev->type == EV_KEY_DOWN) {
-        /* SW：选中行 = 播放行 → 播放/暂停切换；否则切歌（从头播） */
-        if (s_song == &s_songs[s_row] && s_playing) {
-            s_paused = s_paused ? 0 : 1;   /* 任务 ≤50ms 内停/续音 */
-        } else {
-            s_song = &s_songs[s_row];
-            s_playing = 1;
-            s_paused = 0;
-            s_cur_note = 0;
-            s_elapsed_ms = 0;
+        /* 按钮 hover 检测（列表区之外）：变化才重绘按钮区 */
+        b = hit_btn(cx, cy);
+        if (b != s_btn) {
+            s_btn = b;
+            draw_btns();
         }
-        refresh_all();
+    } else if (ev->type == EV_KEY_DOWN) {
+        if (s_btn == 0) {
+            /* 上一首：列表首尾循环，自动从头播 */
+            s_row = (s_row == 0) ? (uint8_t)(SONG_N - 1) : (uint8_t)(s_row - 1);
+            start_song();
+            refresh_all();
+        } else if (s_btn == 1) {
+            /* 下一首：列表首尾循环，自动从头播 */
+            s_row = (uint8_t)((s_row + 1) % SONG_N);
+            start_song();
+            refresh_all();
+        } else if (s_btn == 2) {
+            /* 播放模式切换：顺序循环 → 单曲循环 → 随机 */
+            s_mode = (s_mode + 1) % 3;
+            draw_btns();
+        } else {
+            /* SW 在列表：选中行 = 播放行 → 播放/暂停切换；否则切歌（从头播） */
+            if (s_song == &s_songs[s_row] && s_playing) {
+                s_paused = s_paused ? 0 : 1;   /* 任务 ≤50ms 内停/续音 */
+            } else {
+                start_song();
+            }
+            refresh_all();
+        }
     } else if (ev->type == EV_TICK) {
         /* 每秒刷新：播完的收尾刷新 + 进度条推进 */
         if (s_ui_dirty) { s_ui_dirty = 0; refresh_all(); }
