@@ -36,6 +36,9 @@ static const char *const s_msg[LOG_MSG_N] = {
     "Boot OK",              /* LOG_BOOT_OK */
     "RTC LSE->LSI",         /* LOG_RTC_LSE */
     "Clock set",            /* LOG_RTC_SET */
+    "LCD init fail",        /* LOG_LCD_FAIL */
+    "Login fail",           /* LOG_LOGIN_FAIL */
+    "Login locked",         /* LOG_LOGIN_LOCK */
     "FS mount fail",        /* LOG_FS_MOUNT */
     "FS rebuilt",           /* LOG_FS_REBUILD */
     "FS demo upgraded",     /* LOG_FS_UPGRADE */
@@ -43,6 +46,16 @@ static const char *const s_msg[LOG_MSG_N] = {
     "FS delete fail",       /* LOG_FS_DEL */
     "File deleted",         /* LOG_FS_DELETE */
     "FS id exhausted",      /* LOG_FS_FULL */
+    "File created",         /* LOG_FILE_CREATED */
+    "Sens set",             /* LOG_SET_SENS */
+    "Cursor set",           /* LOG_SET_CSIZE */
+    "Brightness set",       /* LOG_SET_BRIGHT */
+    "Volume set",           /* LOG_SET_VOL */
+    "Screen time set",      /* LOG_SET_STIME */
+    "Input lost",           /* LOG_INPUT_LOST */
+    "Input back",           /* LOG_INPUT_RECOVER */
+    "Screen off",           /* LOG_SCREEN_OFF */
+    "Screen on",            /* LOG_SCREEN_ON */
     "Paint saved",          /* LOG_PAINT_OK */
     "Paint save fail",      /* LOG_PAINT_FAIL */
 };

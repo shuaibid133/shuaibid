@@ -14,6 +14,7 @@
 #include "main.h"
 #include "adc.h"
 #include "app_config.h"
+#include "sys_log.h"
 
 #define JOY_CENTER      2048   /* 12bit ADC 中点 */
 #define JOY_DEADZONE    100    /* 死区：回中误差范围 */
@@ -26,6 +27,9 @@ uint8_t g_js_on = 0;
 void joystick_toggle(void)
 {
     g_js_on ^= 1;
+    /* 日志：设备断开/恢复（输入任务上下文，sys_log_add 有临界区互斥） */
+    if (g_js_on) sys_log_add(LOG_LV_INFO, LOG_INPUT_RECOVER, 0);
+    else         sys_log_add(LOG_LV_WARN, LOG_INPUT_LOST, 0);
 }
 
 uint8_t joystick_is_on(void)

@@ -500,6 +500,7 @@ static void new_file(void)
     write_line(&f, "Created by New button");
     f_close(&f);
     disk_ioctl(0, CTRL_SYNC, NULL);          /* 立即落盘 */
+    sys_log_add(LOG_LV_INFO, LOG_FILE_CREATED, n);   /* 日志：新建成功+编号 */
     list_refresh();
     draw_list();
     draw_status();                           /* 文件数变化，状态区同步刷新 */

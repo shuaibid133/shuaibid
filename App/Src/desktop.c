@@ -32,6 +32,7 @@
 #include "sys_backlight.h"
 #include "app_config.h"
 #include "cmsis_os.h"
+#include "sys_log.h"
 
 /* ---------- 配置参数（阶段6 可改为从 Flash 加载） ---------- */
 #define LOGIN_PASSWORD      "1234"   /* 默认密码 */
@@ -468,11 +469,13 @@ void desktop_handle_event(input_event_t *ev)
             sys_backlight_set(0);        /* 灭背光（屏幕内容保持，省电） */
             s_sleeping = 1;
             g_stats_sleeps++;            /* 统计：熄屏次数（日志模块消费） */
+            sys_log_add(LOG_LV_WARN, LOG_SCREEN_OFF, 0);   /* 日志：熄屏 */
         }
     } else if (s_sleeping) {
         sys_backlight_set(g_sys_cfg.brightness);   /* 任一输入 → 恢复亮度 */
         s_sleeping = 0;
         s_idle_sec = 0;
+        sys_log_add(LOG_LV_INFO, LOG_SCREEN_ON, 0);    /* 日志：唤醒 */
     } else {
         s_idle_sec = 0;
     }
@@ -622,7 +625,9 @@ void desktop_handle_event(input_event_t *ev)
                         enter_desktop();     /* 密码正确 → 桌面 */
                     } else {
                         s_fail_cnt++;
+                        sys_log_add(LOG_LV_ERR, LOG_LOGIN_FAIL, s_fail_cnt);
                         if (s_fail_cnt >= LOGIN_MAX_FAIL) {
+                            sys_log_add(LOG_LV_WARN, LOG_LOGIN_LOCK, LOGIN_LOCK_S);
                             lock_screen();   /* 连续错误 → 锁定 */
                         } else {
                             draw_hint("Wrong Password", CLR_ERR);

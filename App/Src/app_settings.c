@@ -22,6 +22,7 @@
 #include "sys_cfg.h"
 #include "sys_backlight.h"
 #include "app_config.h"
+#include "sys_log.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 #include <string.h>
 
@@ -140,29 +141,54 @@ static void adjust(int8_t dir)
 
     switch (s_row) {
     case 0:    /* 光标灵敏度：joystick.c 实时读 g_sys_cfg，无需额外生效动作 */
-        if (dir > 0 && g_sys_cfg.cursor_sens < 10) g_sys_cfg.cursor_sens++;
-        else if (dir < 0 && g_sys_cfg.cursor_sens > 1) g_sys_cfg.cursor_sens--;
+        if (dir > 0 && g_sys_cfg.cursor_sens < 10) {
+            g_sys_cfg.cursor_sens++;
+            sys_log_add(LOG_LV_INFO, LOG_SET_SENS, g_sys_cfg.cursor_sens);
+        } else if (dir < 0 && g_sys_cfg.cursor_sens > 1) {
+            g_sys_cfg.cursor_sens--;
+            sys_log_add(LOG_LV_INFO, LOG_SET_SENS, g_sys_cfg.cursor_sens);
+        }
         break;
     case 1:    /* 光标大小：先 hide（旧尺寸恢复背景）→ 改值 → show（新尺寸画）。
                 * 顺序反了 cursor_restore_bg 会按新尺寸把缓冲垃圾写回屏幕 */
         cursor_hide();
-        if (dir > 0 && g_sys_cfg.cursor_size < 4) g_sys_cfg.cursor_size++;
-        else if (dir < 0 && g_sys_cfg.cursor_size > 1) g_sys_cfg.cursor_size--;
+        if (dir > 0 && g_sys_cfg.cursor_size < 4) {
+            g_sys_cfg.cursor_size++;
+            sys_log_add(LOG_LV_INFO, LOG_SET_CSIZE, g_sys_cfg.cursor_size);
+        } else if (dir < 0 && g_sys_cfg.cursor_size > 1) {
+            g_sys_cfg.cursor_size--;
+            sys_log_add(LOG_LV_INFO, LOG_SET_CSIZE, g_sys_cfg.cursor_size);
+        }
         draw_row(s_row, 1);      /* 光标已藏，直画不保护 */
         cursor_show();
         break;
     case 2:    /* 亮度：直接写 PWM 占空比 */
-        if (dir > 0 && g_sys_cfg.brightness < 100) g_sys_cfg.brightness = (uint8_t)(g_sys_cfg.brightness + 10);
-        else if (dir < 0 && g_sys_cfg.brightness > 10) g_sys_cfg.brightness = (uint8_t)(g_sys_cfg.brightness - 10);
+        if (dir > 0 && g_sys_cfg.brightness < 100) {
+            g_sys_cfg.brightness = (uint8_t)(g_sys_cfg.brightness + 10);
+            sys_log_add(LOG_LV_INFO, LOG_SET_BRIGHT, g_sys_cfg.brightness);
+        } else if (dir < 0 && g_sys_cfg.brightness > 10) {
+            g_sys_cfg.brightness = (uint8_t)(g_sys_cfg.brightness - 10);
+            sys_log_add(LOG_LV_INFO, LOG_SET_BRIGHT, g_sys_cfg.brightness);
+        }
         sys_backlight_set(g_sys_cfg.brightness);
         break;
     case 3:    /* 音量：存入配置，Music 播放时读 */
-        if (dir > 0 && g_sys_cfg.volume < 100) g_sys_cfg.volume = (uint8_t)(g_sys_cfg.volume + 10);
-        else if (dir < 0 && g_sys_cfg.volume > 0) g_sys_cfg.volume = (uint8_t)(g_sys_cfg.volume - 10);
+        if (dir > 0 && g_sys_cfg.volume < 100) {
+            g_sys_cfg.volume = (uint8_t)(g_sys_cfg.volume + 10);
+            sys_log_add(LOG_LV_INFO, LOG_SET_VOL, g_sys_cfg.volume);
+        } else if (dir < 0 && g_sys_cfg.volume > 0) {
+            g_sys_cfg.volume = (uint8_t)(g_sys_cfg.volume - 10);
+            sys_log_add(LOG_LV_INFO, LOG_SET_VOL, g_sys_cfg.volume);
+        }
         break;
     case 4:    /* 熄屏时间：存入配置，熄屏模块读 */
-        if (dir > 0 && g_sys_cfg.screen_time < 300) g_sys_cfg.screen_time = (uint8_t)(g_sys_cfg.screen_time + 10);
-        else if (dir < 0 && g_sys_cfg.screen_time > 0) g_sys_cfg.screen_time = (uint8_t)(g_sys_cfg.screen_time - 10);
+        if (dir > 0 && g_sys_cfg.screen_time < 300) {
+            g_sys_cfg.screen_time = (uint8_t)(g_sys_cfg.screen_time + 10);
+            sys_log_add(LOG_LV_INFO, LOG_SET_STIME, g_sys_cfg.screen_time);
+        } else if (dir < 0 && g_sys_cfg.screen_time > 0) {
+            g_sys_cfg.screen_time = (uint8_t)(g_sys_cfg.screen_time - 10);
+            sys_log_add(LOG_LV_INFO, LOG_SET_STIME, g_sys_cfg.screen_time);
+        }
         break;
     default:
         return;    /* Set Clock 行不可调 */

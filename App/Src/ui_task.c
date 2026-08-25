@@ -35,6 +35,12 @@ void ui_task(void *argument)
                                         * 初始化，杜绝"打开应用前引脚悬空/被拉低" */
         desktop_init();                /* BOOT 2秒 → LOGIN，内部完成光标接管 */
     }
+    else
+    {
+        /* LCD 初始化失败：屏幕不可用（日志数组在 RAM，固件复位后可从
+         * 代码路径/串口排查；此处记录符合"错误事件"验收点） */
+        sys_log_add(LOG_LV_ERR, LOG_LCD_FAIL, ret);
+    }
 
     for (;;)
     {
