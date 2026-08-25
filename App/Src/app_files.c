@@ -23,6 +23,7 @@
  *           FF_FS_REENTRANT=0，FATFS 不需要互斥锁。
  */
 #include "app.h"
+#include "sys_log.h"
 #include "app_files.h"
 #include "cursor.h"
 #include "rtc_app.h"
@@ -252,11 +253,13 @@ static void fs_init(void)
     if (disk_initialize(0) != 0) {       /* Flash 无响应（没焊/坏片） */
         g_fs_err = 1;
         g_stats_errors++;
+        sys_log_add(LOG_LV_ERR, LOG_FS_MOUNT, 1);
         return;
     }
     if (!rw_self_test()) {               /* 擦/写/读通路实测不过 */
         g_fs_err = 3;
         g_stats_errors++;
+        sys_log_add(LOG_LV_ERR, LOG_FS_MOUNT, 3);
         return;
     }
 
@@ -290,6 +293,7 @@ static void fs_init(void)
             f_unlink("0:/DATA.TXT");
             create_demo();
             disk_ioctl(0, CTRL_SYNC, NULL);  /* 落盘（断电持久化） */
+            sys_log_add(LOG_LV_WARN, LOG_FS_UPGRADE, 0);    /* 日志：旧演示文件升级 */
         } else if (fr == FR_NO_FILESYSTEM) {
             /* 诊断行（正常情况下"Mounting..."一闪而过，看不到这行）：
              * m=挂载码 o=验证码：0=OK 4=无文件 12=无文件系统 2=结构错 1=IO错 */
@@ -308,6 +312,7 @@ static void fs_init(void)
             }
             if (fr == FR_OK) {
                 f_mount(&g_fs, "0:", 1);     /* 挂载新卷 */
+                sys_log_add(LOG_LV_WARN, LOG_FS_REBUILD, 0);  /* 日志：卷重建 */
                 create_demo();               /* 预置演示文件 */
                 disk_ioctl(0, CTRL_SYNC, NULL);  /* 强制全部落盘（断电持久化关键：
                                                  * f_mkfs/create_demo 的最后一块
@@ -315,11 +320,13 @@ static void fs_init(void)
             } else {
                 g_fs_err = 2;
                 g_stats_errors++;
+                sys_log_add(LOG_LV_ERR, LOG_FS_MOUNT, 2);
                 return;
             }
         } else if (fr != FR_OK) {
             g_fs_err = 2;
             g_stats_errors++;
+            sys_log_add(LOG_LV_ERR, LOG_FS_MOUNT, 2);
             return;
         }
     }
@@ -471,8 +478,10 @@ static void new_file(void)
         if (f_stat(path, &fi) == FR_NO_FILE) break;   /* 无重名 → 用此编号 */
     }
     if (n > 999) { g_stats_errors++; return; }        /* 编号用尽（防御） */
+    sys_log_add(LOG_LV_ERR, LOG_FS_FULL, 0);
     if (f_open(&f, path, FA_CREATE_NEW | FA_WRITE) != FR_OK) {
         g_stats_errors++;
+        sys_log_add(LOG_LV_ERR, LOG_FS_WRITE, 0);   /* 日志：新建文件失败 */
         return;
     }
     rtc_app_get_datetime(&dt);
@@ -510,6 +519,7 @@ static void do_delete(void)
         draw_list();
     } else {
         g_stats_errors++;
+        sys_log_add(LOG_LV_ERR, LOG_FS_DEL, 0);      /* 日志：删除失败 */
     }
 }
 

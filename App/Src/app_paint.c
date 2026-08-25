@@ -31,6 +31,7 @@
  *       幂等；卷不存在（从未格式化）时自动 f_mkfs 建卷。
  */
 #include "app_paint.h"
+#include "sys_log.h"
 #include "app.h"
 #include "cursor.h"
 #include "app_files.h"
@@ -583,6 +584,7 @@ void app_paint_handle(input_event_t *ev)
                         uint8_t sec = (uint8_t)((ms + 500) / 1000);
 
                         if (sec > 99) sec = 99;
+                        sys_log_add(LOG_LV_INFO, LOG_PAINT_OK, sec);  /* 日志：保存成功+耗时 */
                         s_status_buf[0] = (char)('0' + sec / 10);
                         s_status_buf[1] = (char)('0' + sec % 10);
                         s_status_buf[2] = 'S';
@@ -600,6 +602,7 @@ void app_paint_handle(input_event_t *ev)
                         s_status = s_status_buf;
                         s_status_sec = 2;
                         s_selftest_ok = 0;   /* 落盘验证失败：下次保存重新自检 */
+                        sys_log_add(LOG_LV_ERR, LOG_PAINT_FAIL, s_err_no);  /* 日志：保存失败+错误码 */
                     }
                     toolbar_redraw();
                 }

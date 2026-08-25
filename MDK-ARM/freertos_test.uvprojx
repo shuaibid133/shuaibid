@@ -851,6 +851,16 @@
               <FilePath>../App/Src/app_monitor.c</FilePath>
             </File>
             <File>
+              <FileName>app_logs.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_logs.c</FilePath>
+            </File>
+            <File>
+              <FileName>sys_log.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\sys_log.c</FilePath>
+            </File>
+            <File>
               <FileName>sys_stats.c</FileName>
               <FileType>1</FileType>
               <FilePath>../App/Src/sys_stats.c</FilePath>

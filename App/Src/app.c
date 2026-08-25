@@ -16,6 +16,7 @@
 #include "app_settings.h"
 #include "app_music.h"
 #include "app_paint.h"
+#include "app_logs.h"
 #include "cursor.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 
@@ -48,7 +49,7 @@ const app_t g_apps[] = {
     {"Paint",    ATK_MD0280_GREEN,    app_paint_open,    app_paint_handle,    NULL},
     {"Music",    ATK_MD0280_MAGENTA,  app_music_open,    app_music_handle,    app_music_close},
     {"Settings", ATK_MD0280_YELLOW,   app_settings_open, app_settings_handle, app_settings_close},
-    {"Logs",     ATK_MD0280_CYAN,     app_stub_open,     app_stub_handle,     NULL},
+    {"Logs",     ATK_MD0280_CYAN,     app_logs_open,     app_logs_handle,     NULL},
     {"Monitor",  ATK_MD0280_GRAY,     app_monitor_open,  app_monitor_handle,  NULL},
 };
 

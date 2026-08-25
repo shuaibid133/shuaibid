@@ -11,6 +11,7 @@
  *   - LSE 起振失败降级 LSI（内部 RC，精度差但时间能走，演示可接受）
  */
 #include "rtc_app.h"
+#include "sys_log.h"
 #include "sys_stats.h"
 #include "main.h"
 #include "stm32f1xx_hal_rtc.h"   /* HAL RTC：CubeMX 未开 RTC 中间件，手动包含 */
@@ -75,6 +76,7 @@ void rtc_app_init(void)
         HAL_RCC_OscConfig(&osc);
         pclk.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;  /* 内部 RC，秒会偏 */
         g_stats_errors++;   /* 统计：LSE 起振失败降级 LSI = 系统级错误 */
+        sys_log_add(LOG_LV_ERR, LOG_RTC_LSE, 0);    /* 日志：RTC 降级 LSI */
     }
 
     /* 3. 选择 RTC 时钟源 */
@@ -151,4 +153,5 @@ void rtc_app_set_datetime(uint8_t month, uint8_t day, uint8_t hour, uint8_t min)
     t.Seconds = 0;
     HAL_RTC_SetTime(&g_hrtc, &t, RTC_FORMAT_BIN);
     HAL_RTCEx_BKUPWrite(&g_hrtc, RTC_BKP_DR1, RTC_BKP_MAGIC);  /* 校时完成标记 */
+    sys_log_add(LOG_LV_INFO, LOG_RTC_SET, 0);      /* 日志：用户校时 */
 }

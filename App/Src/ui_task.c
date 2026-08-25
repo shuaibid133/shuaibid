@@ -14,6 +14,7 @@
 #include "sys_backlight.h"
 #include "app_music.h"
 #include "app_config.h"
+#include "sys_log.h"
 
 void ui_task(void *argument)
 {
@@ -24,6 +25,7 @@ void ui_task(void *argument)
     {
         atk_md0280_clear(ATK_MD0280_WHITE);
         rtc_app_init();                /* 时间源：内部 RTC（LSE，VBAT 保持） */
+        sys_log_add(LOG_LV_INFO, LOG_BOOT_OK, 0);   /* 日志：开机启动完成 */
         sys_backlight_init();          /* 先点亮背光（默认亮度），再加载配置——
                                         * 即使配置读取异常，屏幕也可见（好诊断） */
         sys_cfg_load();                /* Flash → g_sys_cfg：灵敏度/亮度等在登录前生效 */
