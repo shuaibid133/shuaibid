@@ -517,6 +517,7 @@ static void do_delete(void)
     if (f_unlink(path) == FR_OK) {
         list_refresh();
         draw_list();
+        sys_log_add(LOG_LV_INFO, LOG_FS_DELETE, 0);   /* 日志：删除成功 */
     } else {
         g_stats_errors++;
         sys_log_add(LOG_LV_ERR, LOG_FS_DEL, 0);      /* 日志：删除失败 */

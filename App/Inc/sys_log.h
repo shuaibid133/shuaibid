@@ -17,6 +17,7 @@ typedef enum {
     LOG_FS_UPGRADE,      /* 旧版演示文件升级为新版 */
     LOG_FS_WRITE,        /* 文件创建/写入失败 */
     LOG_FS_DEL,          /* 文件删除失败 */
+    LOG_FS_DELETE,       /* 文件删除成功 */
     LOG_FS_FULL,         /* 文件编号用尽（防御性记录） */
     LOG_PAINT_OK,        /* 画图保存成功（param=耗时秒数） */
     LOG_PAINT_FAIL,      /* 画图保存失败（param=错误码 E1-E5） */

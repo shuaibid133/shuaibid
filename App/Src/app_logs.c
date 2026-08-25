@@ -41,6 +41,7 @@ static const char *const s_msg[LOG_MSG_N] = {
     "FS demo upgraded",     /* LOG_FS_UPGRADE */
     "FS write fail",        /* LOG_FS_WRITE */
     "FS delete fail",       /* LOG_FS_DEL */
+    "File deleted",         /* LOG_FS_DELETE */
     "FS id exhausted",      /* LOG_FS_FULL */
     "Paint saved",          /* LOG_PAINT_OK */
     "Paint save fail",      /* LOG_PAINT_FAIL */
