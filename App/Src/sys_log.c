@@ -30,7 +30,13 @@ void sys_log_add(uint8_t level, uint8_t msg_id, uint16_t param)
     rtc_datetime_t dt;
     log_entry_t *e;
 
-    rtc_app_get_datetime(&dt);      /* 读 RTC 无共享状态，临界区外执行 */
+    /* RTC 未初始化时不能读时间（句柄未配置 → HardFault）：
+     * 启动早期（rtc_app_init 之前）记日志填 0:00:00 时间戳 */
+    if (rtc_app_ready()) {
+        rtc_app_get_datetime(&dt);  /* 读 RTC 无共享状态，临界区外执行 */
+    } else {
+        dt.hour = 0; dt.min = 0; dt.sec = 0;
+    }
 
     __disable_irq();                /* 与 input_task 的 joystick_toggle 互斥 */
     e = &s_log[s_head];

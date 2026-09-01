@@ -11,6 +11,11 @@
  * LSE 起振失败自动降级 LSI；首次上电（无 VBAT/刚烧录）设编译时刻 */
 void rtc_app_init(void);
 
+/* RTC 是否已初始化完成（init 末尾置位）：
+ * 0 = 未就绪——sys_log 等模块在 RTC 初始化前记日志时，时间戳不能读
+ * RTC 寄存器（句柄未配置会 HardFault），应填 0:00:00 */
+uint8_t rtc_app_ready(void);
+
 /* RTC 是否已校时（BKP 魔数判断）：
  * 0 = 有效（用户校过时，RTC 正常走）→ 直接进登录
  * 1 = 无效（首次/断电后 BKP 丢失）→ 开机强制进 Set Clock 界面 */

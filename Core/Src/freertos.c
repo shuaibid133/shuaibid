@@ -144,12 +144,13 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  /* LCD init and cursor rendering moved to UI task; this task only toggles LED */
-  /* Infinite loop */
+  /* CubeMX 模板残留：原本每 500ms 翻一次 LED（验证"RTOS 跑起来了"）。
+   * 已废弃——LED 归 ui_task 单写者（EV_TICK 每秒闪 = 系统正常），
+   * 两个任务抢同一颗灯会让诊断失效：ui_task 卡死时灯必须停闪。
+   * 本任务保持存在但空转（留着占位，CubeMX 重新生成不冲突） */
   for(;;)
   {
-    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    osDelay(500);
+    vTaskDelay(1000);
   }
   /* USER CODE END StartDefaultTask */
 }
@@ -169,7 +170,7 @@ void vApplicationMallocFailedHook(void)
    UI task is the only consumer - single-writer rendering stays intact. */
 static void tick_timer_cb(void *argument)
 {
-    input_event_t ev = { .type = EV_TICK, .dx = 0, .dy = 0 };
+    input_event_t ev = { .type = EV_TICK, .dx = 0, .dy = 0, .tick = xTaskGetTickCount() };
 
     xQueueSend(g_event_queue, &ev, 0);
 }

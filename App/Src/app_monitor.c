@@ -83,7 +83,7 @@ static void draw_content(void)
 {
     static TaskStatus_t ts[8];   /* 静态区：TaskStatus_t 约 40B×8=320B，
                                   * ui_task 栈只有 1KB，放栈上会压垮调用链 */
-    uint32_t n, heap;
+    uint32_t n, heap, avg10;
     uint8_t i, hid;
     uint16_t y;
 
@@ -129,6 +129,38 @@ static void draw_content(void)
         atk_md0280_show_xnum(136, y, ts[i].usStackHighWaterMark * 4, 4,
                              ATK_MD0280_NUM_SHOW_NOZERO, ATK_MD0280_LCD_FONT_16, ATK_MD0280_GRAY);
     }
+
+    /* 进阶④ 负载分析：队列峰值积压 + 事件排队延迟（最大/平均，单位 ms）。
+     * 排队延迟 = 出队时刻 - 入队时刻（生产时间戳在 ev.tick），
+     * 直接量化"输入到响应"的实时性：摇杆猛推时若 Q-Pk 上升、Dly 增大，
+     * 说明消费者跟不上生产者——这就是后续"输入事件合并"优化的依据 */
+    y = 100 + n * 20 + 4;
+    atk_md0280_show_string(8, y, 40, 16, (char *)"Q-Pk", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_xnum(44, y, g_stats_q_peak, 2, ATK_MD0280_NUM_SHOW_NOZERO,
+                         ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_string(64, y, 24, 16, (char *)"/16", ATK_MD0280_LCD_FONT_16, ATK_MD0280_GRAY);
+    atk_md0280_show_string(96, y, 56, 16, (char *)"Dly-Max", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_xnum(152, y, g_stats_dly_max, 4, ATK_MD0280_NUM_SHOW_NOZERO,
+                         ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_string(190, y, 20, 16, (char *)"ms", ATK_MD0280_LCD_FONT_16, ATK_MD0280_GRAY);
+
+    y += 18;
+    atk_md0280_show_string(8, y, 56, 16, (char *)"Dly-Avg", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    /* 平均延迟绝大多数是 0~1ms，整数除法后恒显 0——改 0.1ms 精度：
+     * avg10 = sum*10/cnt，如 37 → 显示 "3.7"（即 3.7ms）。纯整数运算，无浮点 */
+    avg10 = g_stats_dly_cnt ? (g_stats_dly_sum * 10) / g_stats_dly_cnt : 0;
+    atk_md0280_show_xnum(68, y, avg10 / 10, 2, ATK_MD0280_NUM_SHOW_NOZERO,
+                         ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_char(92, y, '.', ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_xnum(100, y, avg10 % 10, 1, ATK_MD0280_NUM_SHOW_NOZERO,
+                         ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_string(110, y, 20, 16, (char *)"ms", ATK_MD0280_LCD_FONT_16, ATK_MD0280_GRAY);
+
+    /* 进阶①：被合并掉的移动事件数（合并率 = Mg / Ev）——
+     * 猛推摇杆时 Mg 应该暴涨，Dly-Max 应比合并前（30ms 级）明显下降 */
+    atk_md0280_show_string(140, y, 24, 16, (char *)"Mg", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+    atk_md0280_show_xnum(164, y, g_stats_merged, 5, ATK_MD0280_NUM_SHOW_NOZERO,
+                         ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
 
     redraw_protect_end(hid);
 }

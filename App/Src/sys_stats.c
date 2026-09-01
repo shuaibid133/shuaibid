@@ -14,6 +14,11 @@ volatile uint32_t g_stats_events = 0;
 volatile uint32_t g_stats_drops  = 0;
 volatile uint32_t g_stats_errors = 0;
 volatile uint32_t g_stats_sleeps = 0;
+volatile uint32_t g_stats_q_peak  = 0;
+volatile uint32_t g_stats_dly_max = 0;
+volatile uint32_t g_stats_dly_sum = 0;
+volatile uint32_t g_stats_dly_cnt = 0;
+volatile uint32_t g_stats_merged  = 0;
 
 void sys_stats_reset(void)
 {
@@ -21,4 +26,9 @@ void sys_stats_reset(void)
     g_stats_drops  = 0;
     g_stats_errors = 0;
     g_stats_sleeps = 0;
+    g_stats_q_peak  = 0;
+    g_stats_dly_max = 0;
+    g_stats_dly_sum = 0;
+    g_stats_dly_cnt = 0;
+    g_stats_merged  = 0;
 }

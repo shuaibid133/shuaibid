@@ -34,9 +34,16 @@
 #include "main.h"
 #include "stm32f1xx_hal_tim.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
+#include "sys_watch.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <string.h>
+
+/* 进阶②演示 B 已移师 ui_task（见 ui_task.c WDG_DEMO_UI_HANG）——
+ * music 在图书馆演示会触发声音，且任务懒创建窗口不好踩。
+ * 此宏保留但恒为 0：music 心跳打卡本身仍正常工作（哨兵监控对象） */
+#define WDG_DEMO_MUSIC_HANG      0
+#define WDG_DEMO_MUSIC_HANG_MS   10000   /* 任务创建后卡死时长 */
 
 #define SCR_W   ATK_MD0280_LCD_WIDTH
 #define SCR_H   ATK_MD0280_LCD_HEIGHT
@@ -163,6 +170,7 @@ static int8_t   s_btn = -1;              /* 按钮 hover：0=Prev 1=Next 2=Mode 
 static uint8_t  s_mode = 0;              /* 播放模式：0=顺序循环 1=单曲循环 2=随机 */
 static uint32_t s_rnd = 0;               /* 随机播放的 LCG 状态 */
 static TaskHandle_t s_task = NULL;
+static uint32_t s_task_t0 = 0;           /* 任务创建时刻（演示 B 卡死窗口起点） */
 static TIM_HandleTypeDef g_htim2;
 
 /* ---------- 局部重绘保护（与桌面框架同协议） ---------- */
@@ -407,6 +415,17 @@ static void music_task(void *argument)
 {
     (void)argument;
     for (;;) {
+        /* 演示 B：任务创建后卡死 10 秒（打开 Music 应用即触发）。
+         * 喂狗者照常 → IWDG 不触发；哨兵 3s 后报警；10s 后自行恢复 */
+        if (WDG_DEMO_MUSIC_HANG &&
+            xTaskGetTickCount() - s_task_t0 < WDG_DEMO_MUSIC_HANG_MS) {
+            while (1) { }
+        }
+
+        /* 进阶②：本任务心跳打卡（事件驱动，阻塞等播放/暂停状态是
+         * 正常态，阈值 3s 由哨兵放宽判定） */
+        sys_watch_beat(WATCH_MUSIC);
+
         const song_t *sg = s_song;
         uint16_t i;
 
@@ -473,6 +492,8 @@ void app_music_open(void)
                          * 重复 Init 幂等：State != RESET 跳过 MspInit，仅重写寄存器 */
     if (s_task == NULL) {
         xTaskCreate(music_task, "music", 512, NULL, 1, &s_task);   /* 任务只创建一次 */
+        s_task_t0 = xTaskGetTickCount();   /* 创建时刻：演示 B 卡死窗口起点
+                                            * （任务惰性创建，不能用开机时刻） */
     }
 
     cursor_init(SCR_W / 2, SONG_Y0 + SONG_ROW_H / 2);

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    desktop.c
  * @brief   桌面框架：上电启动界面 → 密码登录 → 桌面主界面
  *
@@ -281,16 +281,32 @@ static uint8_t hit_icon(uint16_t x, uint16_t y)
 
 /* ---------- 界面 ---------- */
 
-/* BOOT：蓝底 + 项目名 + 构建版本（区分固件版本用，调试期保留） */
+/* 版本号格式化：V%d.0（1-99，无 sprintf 重库手动拼） */
+static void fmt_ver(char *buf, uint8_t v)
+{
+    uint8_t i = 0;
+
+    buf[i++] = 'V';
+    if (v >= 10) buf[i++] = (char)('0' + v / 10);
+    buf[i++] = (char)('0' + v % 10);
+    buf[i++] = '.';
+    buf[i++] = '0';
+    buf[i] = 0;
+}
+
+/* BOOT：蓝底 + 项目名 + 系统版本（OTA 升级后重启即显示新版本——
+ * "升级生效"的第一个可见证据，与 OTA 应用里的 Current 呼应） */
 static void draw_boot(void)
 {
+    char ver[8];
+
+    fmt_ver(ver, g_sys_cfg.version);
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_BLUE);
     atk_md0280_show_string(72, 120, 160, 32, (char *)"KazepOS",
                            ATK_MD0280_LCD_FONT_32, ATK_MD0280_WHITE);
     atk_md0280_show_string(80, 168, 120, 16, (char *)"Starting...",
                            ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
-    atk_md0280_show_string(80, 200, 160, 12, (char *)"BUILD 0822 (KazepOS)",
-                           ATK_MD0280_LCD_FONT_12, ATK_MD0280_WHITE);
+    atk_md0280_show_string(80, 200, 160, 12, ver, ATK_MD0280_LCD_FONT_12, ATK_MD0280_WHITE);
 }
 
 /* ---------- 校时界面（Set Clock） ----------
@@ -328,6 +344,10 @@ static void enter_clock_set(void)
 {
     uint8_t i;
 
+    cursor_hide();   /* 对称于 launch_app：切换前先藏掉旧界面光标，保证 visible
+                      * 状态与屏幕一致——否则 fill 全屏盖掉光标后状态失真，
+                      * 后续重绘保护会误触发 hide→restore（旧背景写回屏幕成
+                      * 残影）→show（光标画回旧位置），最终双光标 */
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
     s_state = UI_CLOCK_SET;
     s_clk_len = 0;
@@ -352,6 +372,8 @@ static void enter_login(void)
 {
     uint8_t i;
 
+    cursor_hide();   /* 同 enter_clock_set：切换前先同步光标状态（锁屏等路径
+                      * 从可见光标界面进来，不隐藏会留残影/双光标） */
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
     s_state = UI_LOGIN;
     s_pwd_len = 0;
@@ -377,6 +399,8 @@ static void enter_desktop(void)
 {
     uint8_t i;
 
+    cursor_hide();   /* 同 enter_clock_set：从应用返回时先把应用界面光标藏掉
+                      * （Monitor 等可见光标应用实测出过双光标残影） */
     atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, ATK_MD0280_WHITE);
     s_state = UI_DESKTOP;
 
@@ -519,7 +543,7 @@ void desktop_handle_event(input_event_t *ev)
             /* K1 = 跳过校时（时间保持编译时刻，进登录/回桌面） */
             clock_set_done();
         } else if (ev->type == EV_KEY_DOWN) {
-            uint8_t idx, i, ok = 1;
+            uint8_t idx, i;
             char c;
 
             idx = hit_key(cx, cy);
@@ -544,7 +568,7 @@ void desktop_handle_event(input_event_t *ev)
                         rtc_app_set_datetime(mon, day, hour, min);
                         clock_set_done();    /* 校时完成 → 登录 / 回桌面 */
                     } else {
-                        for (i = 0; i < 8; i++) { ok = 0; s_clk[i] = 0; }
+                        for (i = 0; i < 8; i++) s_clk[i] = 0;
                         s_clk_len = 0;
                         draw_clk_input();
                         draw_hint("Invalid! Re-enter", CLR_ERR);

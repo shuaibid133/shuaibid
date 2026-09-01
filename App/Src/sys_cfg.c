@@ -17,6 +17,7 @@
 #include "sys_cfg.h"
 #include "app_config.h"
 #include "w25q128.h"
+#include "sys_log.h"
 #include <string.h>
 
 #define CFG_SECTOR      0xFFE000u   /* 专用扇区：末 8KB 区（0xFFF000 是自检区） */
@@ -45,22 +46,35 @@ void sys_cfg_load(void)
     g_sys_cfg.brightness  = 100;
     g_sys_cfg.volume      = 80;
     g_sys_cfg.screen_time = 60;
-    g_sys_cfg.rsv         = 0;
+    g_sys_cfg.version     = 1;   /* 出厂版本 V1.0 */
 
     w25q128_read(CFG_SECTOR, s_buf, sizeof(s_buf));
-    if (s_buf[0] == 0xFF && s_buf[1] == 0xFF) return;   /* 擦除态：从未保存过 */
-    if (s_buf[0] != (CFG_MAGIC & 0xFF) || s_buf[1] != (CFG_MAGIC >> 8)) return;
+    if (s_buf[0] == 0xFF && s_buf[1] == 0xFF) return;   /* 擦除态：从未保存过（首启，不算损坏） */
+
+    /* 进阶③ 存储一致性：magic/校验和任一不符 = 半写/错位脏数据。
+     * 回退默认值 + 记日志——"配置损坏"必须留证据（Logs 可查），
+     * 而不是静默回到默认（用户会以为设置被清空了） */
+    if (s_buf[0] != (CFG_MAGIC & 0xFF) || s_buf[1] != (CFG_MAGIC >> 8)) {
+        sys_log_add(LOG_LV_ERR, LOG_CFG_CORRUPT, 1);    /* param=1: magic 不符 */
+        return;
+    }
     sum = cfg_sum(s_buf + 4, sizeof(sys_config_t));
-    if (s_buf[2] != (sum & 0xFF) || s_buf[3] != (sum >> 8)) return;
+    if (s_buf[2] != (sum & 0xFF) || s_buf[3] != (sum >> 8)) {
+        sys_log_add(LOG_LV_ERR, LOG_CFG_CORRUPT, 2);    /* param=2: 校验和不符 */
+        return;
+    }
 
     memcpy(&g_sys_cfg, s_buf + 4, sizeof(sys_config_t));
 
-    /* 范围钳制：旧版本/脏数据的越界值可能把硬件带坏 */
+    /* 范围钳制：旧版本/脏数据的越界值可能把硬件带坏。
+     * version 钳制为 1：老固件保存的配置没有 version 字段（rsv=0），
+     * 升级固件后读到的 0 视为出厂版本——不能带 0 运行 */
     if (g_sys_cfg.cursor_size < 1 || g_sys_cfg.cursor_size > 4) g_sys_cfg.cursor_size = 1;
     if (g_sys_cfg.cursor_sens < 1 || g_sys_cfg.cursor_sens > 10) g_sys_cfg.cursor_sens = 3;
     if (g_sys_cfg.brightness < 10 || g_sys_cfg.brightness > 100) g_sys_cfg.brightness = 100;
     if (g_sys_cfg.volume > 100) g_sys_cfg.volume = 80;
     if (g_sys_cfg.screen_time > 300) g_sys_cfg.screen_time = 60;
+    if (g_sys_cfg.version < 1 || g_sys_cfg.version > 99) g_sys_cfg.version = 1;
 }
 
 void sys_cfg_save(void)

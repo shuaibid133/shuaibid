@@ -17,7 +17,8 @@ typedef struct
     uint8_t brightness;     /* 屏幕亮度 10~100%（sys_backlight PWM 占空比） */
     uint8_t volume;         /* 系统音量 0~100%（Music 蜂鸣器 PWM 占空比） */
     uint8_t screen_time;    /* 熄屏时间（秒）：0=永不熄屏，10~300 */
-    uint8_t rsv;            /* 保留位（结构对齐，后续扩展字段时布局不变） */
+    uint8_t version;        /* 系统版本（OTA 生效后写入；1 = V1.0，与更新包解耦——
+                             * 已升级的设备不会因更新区被擦而"降级"） */
 } sys_config_t;
 
 extern sys_config_t g_sys_cfg;

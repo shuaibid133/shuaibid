@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    app.h
  * @brief   应用注册表接口：每个应用实现统一接口（open/handle），
  *          桌面框架通过 g_apps 表管理全部应用

@@ -52,6 +52,20 @@ typedef enum {
     LOG_PAINT_OK,        /* 保存成功（param=耗时秒数） */
     LOG_PAINT_FAIL,      /* 保存失败（param=错误码 E1-E5） */
 
+    /* ---- 存储一致性（进阶③）---- */
+    LOG_CFG_CORRUPT,     /* 配置扇区损坏（magic/校验失败），已回退默认值 */
+    LOG_IMG_CORRUPT,     /* 图片文件损坏（校验和不符），预览被拒 */
+
+    /* ---- 任务异常检测（进阶②）---- */
+    LOG_WDG_RESET,       /* 看门狗超时复位（IWDG 2s 未喂 → 硬件复位后记录） */
+    LOG_TASK_HUNG,       /* 任务心跳停止（param=任务ID 0=input 1=music 2=ui） */
+    LOG_TASK_RECOVER,    /* 任务心跳恢复（param=任务ID） */
+
+    /* ---- 伪 OTA（进阶⑥）---- */
+    LOG_OTA_DOWNLOAD,    /* 更新包下载+落盘校验通过（param=新版本号） */
+    LOG_OTA_APPLIED,     /* 更新已应用，重启后生效（param=新版本号） */
+    LOG_OTA_ROLLBACK,    /* 校验失败回退（param=1 CRC不符 2 包头坏 3 未知状态） */
+
     LOG_MSG_N
 } log_msg_id_t;
 

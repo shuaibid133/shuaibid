@@ -58,6 +58,14 @@ static const char *const s_msg[LOG_MSG_N] = {
     "Screen on",            /* LOG_SCREEN_ON */
     "Paint saved",          /* LOG_PAINT_OK */
     "Paint save fail",      /* LOG_PAINT_FAIL */
+    "Config corrupt",       /* LOG_CFG_CORRUPT */
+    "Image corrupt",        /* LOG_IMG_CORRUPT */
+    "Watchdog reset",       /* LOG_WDG_RESET */
+    "Task hung",            /* LOG_TASK_HUNG */
+    "Task recovered",       /* LOG_TASK_RECOVER */
+    "OTA pkg OK",           /* LOG_OTA_DOWNLOAD */
+    "OTA applied",          /* LOG_OTA_APPLIED */
+    "OTA rollback",         /* LOG_OTA_ROLLBACK */
 };
 
 static uint8_t s_scroll = 0;    /* 滚动偏移：0 = 最新在顶 */

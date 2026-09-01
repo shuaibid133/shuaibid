@@ -21,6 +21,7 @@
                                   *  的板子重新走一次初始化，写入真实日期） */
 
 static RTC_HandleTypeDef g_hrtc;
+static uint8_t s_ready = 0;          /* init 完成置 1（sys_log 时间戳安全标志） */
 
 /* 解析编译器 __DATE__（"Aug 22 2026"）与 __TIME__（"14:30:55"）宏，
  * 得到"编译时刻"的真实日历时间。首次上电写入 RTC——板子无备份电池时
@@ -102,6 +103,13 @@ void rtc_app_init(void)
     {
         rtc_set_compile_time();
     }
+
+    s_ready = 1;   /* 就绪标志：此后 sys_log 时间戳才安全 */
+}
+
+uint8_t rtc_app_ready(void)
+{
+    return s_ready;
 }
 
 void rtc_app_get_time(uint8_t *hour, uint8_t *min)

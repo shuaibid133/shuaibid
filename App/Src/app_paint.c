@@ -16,9 +16,12 @@
  *     用 atk_md0280_write_area 整行批量写屏（~10ms，无逐行刷新感）
  *     （二进制像素文件用文本查看器只会看到乱码，见 app_files.c draw_img_view）
  *
- * 存储格式（0:/IMGxxx.IMG）：3 字节 magic "KP1" + 画布像素流
- *   （RGB565 小端，240×220，行优先）。无内嵌宽高——画布尺寸固定，
- *   读取时按固定尺寸解析；magic 校验防读入非图片文件。
+ * 存储格式（0:/IMGxxx.IMG）v2（进阶③ 一致性保护）：
+ *   9 字节头：magic "KP" + 版本 '2' + 宽(2B LE) + 高(2B LE) + 校验和(2B LE，
+ *   像素字节累加) + 画布像素流（RGB565 小端，240×220，行优先）。
+ *   保存是事务化的：先写占位头+像素 → 最后回写带校验和的真实头；
+ *   断电发生在回写之前 → 校验和与像素对不上 → 打开时识别损坏并拒绝。
+ *   旧 v1 格式（3B magic "KP1"）仍可读（向后兼容，无校验）。
  *
  * 内存：画布不缓存（240×220×2 ≈ 103KB 超 64KB SRAM），直接画在 LCD，
  *       保存时读 GRAM（BSP atk_md0280_read_point），只有一行缓冲 480B。
@@ -60,6 +63,11 @@
 #define SAVE_X      108              /* [SAVE] x 108..207 */
 #define BTN_W       100
 #define STAT_X      212              /* 状态文字区（3 字符）x 212..239 */
+
+/* ---------- 存储格式（进阶③ 一致性保护） ---------- */
+#define IMG_HDR_V1   3               /* v1 头：magic "KP1"（兼容读取，无校验） */
+#define IMG_HDR_V2   9               /* v2 头：magic"KP"+ver+宽+高+校验和(2B LE) */
+#define IMG_PIX_H    220             /* 像素区行数（画布高 = CANVAS_Y1-24+1） */
 
 /* ---------- 画笔颜色表 ---------- */
 static const uint16_t s_colors[COLOR_N] = {
@@ -235,7 +243,7 @@ static uint8_t verify_file_ink(const char *path, uint32_t ink)
     uint32_t ink2 = 0;
 
     if (f_open(&f, path, FA_READ) != FR_OK) return 0;
-    if (f_lseek(&f, 3) != FR_OK) { f_close(&f); return 0; }
+    if (f_lseek(&f, IMG_HDR_V2) != FR_OK) { f_close(&f); return 0; }   /* 跳过 v2 头 */
     for (y = 0; y < 220; y++) {
         if (f_read(&f, s_line, SCR_W * 2, &br) != FR_OK || br != SCR_W * 2) {
             f_close(&f); return 0;
@@ -288,8 +296,14 @@ static uint8_t paint_save(uint32_t *ms_out)
     uint16_t n_before;
     uint32_t ink = 0;                  /* 非白像素计数 */
     uint32_t t0 = (uint32_t)xTaskGetTickCount();
+    uint16_t sum = 0;                  /* 像素字节累加校验和（mod 2^16） */
     uint8_t ok = 1;
-    uint8_t hdr[3] = { 'K', 'P', '1' };
+    /* v2 头：magic "KP" + '2' + 宽 + 高 + 校验和。校验和先填 0 占位，
+     * 像素全部写完后回写真实值——"数据先落盘、标志后落盘"的事务顺序 */
+    uint8_t hdr[IMG_HDR_V2] = { 'K', 'P', '2',
+                                (uint8_t)(SCR_W & 0xFF), (uint8_t)(SCR_W >> 8),
+                                (uint8_t)(IMG_PIX_H & 0xFF), (uint8_t)(IMG_PIX_H >> 8),
+                                0, 0 };
     char path[16];
 
     if (ms_out != NULL) *ms_out = 0;
@@ -305,7 +319,8 @@ static uint8_t paint_save(uint32_t *ms_out)
     path[13] = 0;
     cursor_hide();                       /* 光标不入画 */
     if (f_open(&f, path, FA_CREATE_NEW | FA_WRITE) == FR_OK) {
-        if (f_write(&f, hdr, 3, &bw) != FR_OK || bw != 3) { ok = 0; s_err_no = 3; }
+        /* 写占位头（校验和=0）：此刻断电 → 头与像素不符 → 打开时被识别为损坏 */
+        if (f_write(&f, hdr, IMG_HDR_V2, &bw) != FR_OK || bw != IMG_HDR_V2) { ok = 0; s_err_no = 3; }
         for (y = CANVAS_Y0; ok && y <= CANVAS_Y1; y++) {
             for (x = 0; x < SCR_W; x++) {
                 uint16_t c = atk_md0280_read_point(x, y);
@@ -314,10 +329,11 @@ static uint8_t paint_save(uint32_t *ms_out)
                 s_line[x * 2] = (uint8_t)(c & 0xFF);
                 s_line[x * 2 + 1] = (uint8_t)(c >> 8);
             }
+            for (x = 0; x < SCR_W * 2; x++) sum = (uint16_t)(sum + s_line[x]);  /* 边写边累计校验 */
             if (f_write(&f, s_line, SCR_W * 2, &bw) != FR_OK || bw != SCR_W * 2) { ok = 0; s_err_no = 3; }
             if ((y & 0x0F) == 0x07) {
                 /* 每 16 行更新一次保存进度（克隆片擦除慢，给用户反馈避免"死机感"） */
-                uint8_t p = (uint8_t)(((y - CANVAS_Y0) * 100) / 220);
+                uint8_t p = (uint8_t)(((y - CANVAS_Y0) * 100) / IMG_PIX_H);
 
                 s_status_buf[0] = (char)('0' + p / 10);
                 s_status_buf[1] = (char)('0' + p % 10);
@@ -326,6 +342,14 @@ static uint8_t paint_save(uint32_t *ms_out)
                 s_status = s_status_buf;
                 draw_status_area();          /* 光标已在 paint_save 开头隐藏，安全 */
             }
+        }
+        /* 像素全部落盘 → 回写真实头（校验和）——"最后写标志"。
+         * 断电发生在回写前：头校验和=0 ≠ 像素累计 → 打开时拒绝显示 */
+        if (ok && f_lseek(&f, 0) != FR_OK) { ok = 0; s_err_no = 3; }
+        if (ok) {
+            hdr[7] = (uint8_t)(sum & 0xFF);
+            hdr[8] = (uint8_t)(sum >> 8);
+            if (f_write(&f, hdr, IMG_HDR_V2, &bw) != FR_OK || bw != IMG_HDR_V2) { ok = 0; s_err_no = 3; }
         }
         f_close(&f);
         if (ok && ink == 0) {

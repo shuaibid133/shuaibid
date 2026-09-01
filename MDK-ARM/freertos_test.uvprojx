@@ -785,6 +785,11 @@
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim_ex.c</FilePath>
             </File>
+            <File>
+              <FileName>stm32f1xx_hal_iwdg.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\STM32F1xx_HAL_Driver\Src\stm32f1xx_hal_iwdg.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -914,6 +919,26 @@
               <FileName>app_paint.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\Src\app_paint.c</FilePath>
+            </File>
+            <File>
+              <FileName>sys_watch.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\sys_watch.c</FilePath>
+            </File>
+            <File>
+              <FileName>sys_wdg.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\sys_wdg.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_ota.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_ota.c</FilePath>
+            </File>
+            <File>
+              <FileName>sys_ota.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\sys_ota.c</FilePath>
             </File>
           </Files>
         </Group>

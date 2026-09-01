@@ -15,6 +15,15 @@ extern volatile uint32_t g_stats_drops;    /* 队列满丢弃数（xQueueSend �
 extern volatile uint32_t g_stats_errors;   /* 系统级错误累计（RTC 降级 / 文件系统失败等） */
 extern volatile uint32_t g_stats_sleeps;   /* 熄屏次数（desktop 空闲超时灭背光 +1，唤醒不计数） */
 
+/* ---- 进阶④ 运行负载分析：延迟/队列水位（只 ui_task 写，单写者成立） ---- */
+extern volatile uint32_t g_stats_q_peak;   /* 队列历史最高积压数（含刚取出的那条，ui_task 维护） */
+extern volatile uint32_t g_stats_dly_max;  /* 事件排队延迟最大值（tick=1ms） */
+extern volatile uint32_t g_stats_dly_sum;  /* 事件排队延迟累计（算平均用） */
+extern volatile uint32_t g_stats_dly_cnt;  /* 参与延迟统计的事件数 */
+
+/* ---- 进阶① 输入事件优化：移动事件合并（只 ui_task 写，单写者成立） ---- */
+extern volatile uint32_t g_stats_merged;   /* 被合并掉的移动事件数（合并率 = merged/events） */
+
 void sys_stats_reset(void);                /* 清零（开机时调用一次） */
 
 #endif

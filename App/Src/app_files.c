@@ -44,6 +44,12 @@
 #define VIEW_LINES  20               /* 查看模式：20 行 × 40 字符（FONT_12） */
 #define VIEW_CHARS  40
 
+/* Paint 图片格式（与 app_paint.c 保持一致，进阶③ 一致性保护）：
+ * v1 = 3B magic "KP1"（旧，无校验）；v2 = 9B 头 + 校验和（新） */
+#define IMG_HDR_V1   3
+#define IMG_HDR_V2   9
+#define IMG_PIX_H    220
+
 /* 工具栏（New/Del 按钮，位于列表与状态区之间） */
 #define TB_Y0       226
 #define TB_H        28
@@ -91,6 +97,7 @@ static uint8_t g_tb_hover = 0;       /* 工具栏 hover：1=[New] 2=[Del] 0=无 
 /* ---------- 查看模式 ---------- */
 static uint8_t g_viewing = 0;
 static uint8_t g_view_img = 0;          /* 查看模式：1=图片（PAINT.IMG）0=文本 */
+static uint8_t s_img_v2 = 0;       /* 当前预览图片为 v2 格式（带校验和，打开时验证） */
 static char g_view_raw[VIEW_LINES * VIEW_CHARS];   /* 原始内容缓冲 */
 static char g_view_grid[VIEW_LINES][VIEW_CHARS + 1]; /* 压行后的网格 */
 static uint8_t g_view_lines;
@@ -602,9 +609,14 @@ static void open_file(void)
         if (f_read(&f, g_view_raw, sizeof(g_view_raw), &br) != FR_OK) br = 0;
         f_close(&f);
     }
-    /* 识别 Paint 图片（magic "KP1"）→ 图片模式；否则文本模式 */
-    g_view_img = (br >= 3 && g_view_raw[0] == 'K' && g_view_raw[1] == 'P' &&
-                  g_view_raw[2] == '1') ? 1 : 0;
+    /* 识别 Paint 图片：magic "KP" + '2'(v2 带校验) / '1'(v1 旧格式) → 图片模式；
+     * 其余 → 文本模式 */
+    g_view_img = 0;
+    s_img_v2 = 0;
+    if (br >= 3 && g_view_raw[0] == 'K' && g_view_raw[1] == 'P') {
+        if (g_view_raw[2] == '2') { g_view_img = 1; s_img_v2 = 1; }
+        else if (g_view_raw[2] == '1') { g_view_img = 1; }   /* v1 兼容：无校验 */
+    }
     if (!g_view_img) {
         /* 压成 40 列网格：丢弃 \r\n，其余照抄 */
         for (i = 0; i < br; i++) {
@@ -630,7 +642,9 @@ static void draw_img_view(void)
 {
     FIL f;
     UINT br;
-    uint16_t y;
+    uint16_t y, i;
+    uint16_t rows, sum, hdr_sum;
+    uint8_t bad = 0;
     char path[16];
     uint8_t hid;
 
@@ -642,19 +656,55 @@ static void draw_img_view(void)
     atk_md0280_show_xnum(170, 32, g_view_size, 6, ATK_MD0280_NUM_SHOW_NOZERO,
                          ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
     if (f_open(&f, path, FA_READ) == FR_OK) {
-        if (f_lseek(&f, 3) == FR_OK) {   /* 跳过 magic */
-            /* 一次读 8 行、一次写 8 行（窗口设一次写 1920 像素）：逐行读写时
-             * 每行触发 1~2 次 W25Q 扇区 SPI 读（480B 跨 512B 扇区边界），
-             * 220 行 ≈ 0.15s 的"逐行画"过程肉眼可见；批量后窗口设置 220→28
-             * 次、SPI 读连续化，总耗时 ~70ms 无刷新感 */
-            for (y = 0; y < 220; y += 8) {
-                uint16_t rows = (uint16_t)((220 - y < 8) ? (220 - y) : 8);
+        if (s_img_v2) {
+            /* v2：9B 头带校验和，两遍读取：
+             * 第一遍只读不画屏，累计校验和并比对（脏数据不上屏——若边画
+             * 边验，损坏段会先画出杂色再被红字盖掉）；通过才第二遍画屏。
+             * 代价是像素读两遍（~70ms → ~140ms），换取"损坏直接红字" */
+            if (f_read(&f, g_img_buf, IMG_HDR_V2, &br) == FR_OK && br == IMG_HDR_V2 &&
+                g_img_buf[0] == 'K' && g_img_buf[1] == 'P' && g_img_buf[2] == '2' &&
+                g_img_buf[3] == (SCR_W & 0xFF) && g_img_buf[4] == (SCR_W >> 8) &&
+                g_img_buf[5] == (IMG_PIX_H & 0xFF) && g_img_buf[6] == (IMG_PIX_H >> 8)) {
+                hdr_sum = (uint16_t)(g_img_buf[7] | ((uint16_t)g_img_buf[8] << 8));
+                sum = 0;
+                for (y = 0; y < IMG_PIX_H && !bad; y += 8) {
+                    rows = (uint16_t)((IMG_PIX_H - y < 8) ? (IMG_PIX_H - y) : 8);
 
-                if (f_read(&f, g_img_buf, rows * 480, &br) != FR_OK || br != rows * 480) break;
-                /* 小端字节对按 uint16_t 数组直写（ARM 小端，内存布局与
-                 * 文件一致；静态数组天然对齐，M3 硬件支持非对齐读） */
-                atk_md0280_write_area(0, (uint16_t)(52 + y), (uint16_t)(SCR_W - 1),
-                                      (uint16_t)(52 + y + rows - 1), (const uint16_t *)g_img_buf);
+                    if (f_read(&f, g_img_buf, rows * 480, &br) != FR_OK || br != rows * 480) { bad = 1; break; }
+                    for (i = 0; i < rows * 480; i++) sum = (uint16_t)(sum + g_img_buf[i]);
+                }
+                if (!bad && sum != hdr_sum) bad = 1;
+                if (bad) {
+                    /* 校验不过 = 头与像素对不上（保存中途断电/数据被写坏）
+                     * → 拒绝显示 + 红字提示 + 日志留证（进阶③） */
+                    atk_md0280_fill(0, 120, SCR_W - 1, 180, ATK_MD0280_WHITE);
+                    atk_md0280_show_string(48, 145, 150, 16, (char *)"IMAGE CORRUPT",
+                                           ATK_MD0280_LCD_FONT_16, ATK_MD0280_RED);
+                    sys_log_add(LOG_LV_WARN, LOG_IMG_CORRUPT, 0);
+                } else {
+                    /* 校验通过：回到像素起点，第二遍画屏（小端字节对按
+                     * uint16_t 直写；静态数组天然对齐） */
+                    if (f_lseek(&f, IMG_HDR_V2) == FR_OK) {
+                        for (y = 0; y < IMG_PIX_H; y += 8) {
+                            rows = (uint16_t)((IMG_PIX_H - y < 8) ? (IMG_PIX_H - y) : 8);
+
+                            if (f_read(&f, g_img_buf, rows * 480, &br) != FR_OK || br != rows * 480) break;
+                            atk_md0280_write_area(0, (uint16_t)(52 + y), (uint16_t)(SCR_W - 1),
+                                                  (uint16_t)(52 + y + rows - 1), (const uint16_t *)g_img_buf);
+                        }
+                    }
+                }
+            }
+        } else {
+            /* v1 旧格式：无校验，按固定尺寸直接读（向后兼容） */
+            if (f_lseek(&f, IMG_HDR_V1) == FR_OK) {
+                for (y = 0; y < IMG_PIX_H; y += 8) {
+                    rows = (uint16_t)((IMG_PIX_H - y < 8) ? (IMG_PIX_H - y) : 8);
+
+                    if (f_read(&f, g_img_buf, rows * 480, &br) != FR_OK || br != rows * 480) break;
+                    atk_md0280_write_area(0, (uint16_t)(52 + y), (uint16_t)(SCR_W - 1),
+                                          (uint16_t)(52 + y + rows - 1), (const uint16_t *)g_img_buf);
+                }
             }
         }
         f_close(&f);

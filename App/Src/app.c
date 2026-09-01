@@ -6,9 +6,8 @@
  *       只认"表里的第几项"：查表 → 调 open() 让它出现 → 把事件转发给它的
  *       handle()。应用自己管自己（画自己的界面、处理自己的事件）。
  *
- * 当前状态：Monitor 是第一个真实实现（验证"打开→操作→返回"链路），
- *           其余应用暂为占位 stub（Coming Soon），逐个实现后替换
- *           注册表对应行即可，框架代码零改动。
+ * 7 个应用全部真实实现：Files/Paint/Music/Settings/Logs/Monitor/
+ * OTA（进阶⑥，最后加入）——新增应用 = 注册表加一行，桌面框架零改动。
  */
 #include "app.h"
 #include "app_monitor.h"
@@ -17,6 +16,7 @@
 #include "app_music.h"
 #include "app_paint.h"
 #include "app_logs.h"
+#include "app_ota.h"
 #include "cursor.h"
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 
@@ -51,6 +51,7 @@ const app_t g_apps[] = {
     {"Settings", ATK_MD0280_YELLOW,   app_settings_open, app_settings_handle, app_settings_close},
     {"Logs",     ATK_MD0280_CYAN,     app_logs_open,     app_logs_handle,     NULL},
     {"Monitor",  ATK_MD0280_GRAY,     app_monitor_open,  app_monitor_handle,  NULL},
+    {"OTA",      ATK_MD0280_RED,      app_ota_open,      app_ota_handle,      NULL},
 };
 
 const uint8_t g_app_count = sizeof(g_apps) / sizeof(g_apps[0]);
