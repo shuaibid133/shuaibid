@@ -5,10 +5,11 @@
  * 架构：由 ui_task 逐事件调用（ui_task 只做事件分发，本文件是桌面框架）
  *   - 状态机：UI_BOOT → UI_CLOCK_SET（RTC 失效时）→ UI_LOGIN → UI_DESKTOP
  *     （桌面态内嵌应用前台态：s_cur_app 非空时事件全部转发给注册表中的应用，
- *     K1 返回桌面）
+ *     K1 返回桌面；UI_PWD_SET 改密码由 Settings 进入，完成后回桌面）
  *   - 校时界面：精英板 VBAT 无电池，断电 RTC 丢失——每次开机自动进
  *     Set Clock 输入真实时间（复用登录数字键盘），K1 可跳过
- *   - 密码 4 位，错误提示，连续错误进入锁定（倒计时，输入全部无效）
+ *   - 密码 4 位（默认 1234，Settings 可改并落盘 Flash），错误提示，
+ *     连续错误进入锁定（倒计时，输入全部无效）
  *   - 数字键盘交互：摇杆移光标选格（蓝框高亮），SW 按下输入
  *   - K1 逐级回退：应用 → 桌面（锁屏） → 登录页
  *   - 桌面图标来自应用注册表（app.c）：hover 白框高亮，SW 打开
@@ -31,11 +32,13 @@
 #include "sys_stats.h"
 #include "sys_backlight.h"
 #include "app_config.h"
+#include "sys_cfg.h"
 #include "cmsis_os.h"
 #include "sys_log.h"
 
-/* ---------- 配置参数（阶段6 可改为从 Flash 加载） ---------- */
-#define LOGIN_PASSWORD      "1234"   /* 默认密码 */
+/* ---------- 登录参数 ---------- */
+/* 密码本体在 g_sys_cfg.pwd：默认 "1234"（sys_cfg 出厂默认值），Settings 应用
+ * 可改，改完立即落盘 Flash、重启保留。登录/锁屏验证读它，这里只剩防锁参数 */
 #define LOGIN_MAX_FAIL      3        /* 连续错误 N 次锁定 */
 #define LOGIN_LOCK_S        30       /* 锁定秒数 */
 
@@ -76,18 +79,22 @@ typedef enum {
     UI_BOOT,        /* 启动界面（停留 2 秒） */
     UI_CLOCK_SET,   /* 校时界面（RTC 失效时自动进入，输入真实时间） */
     UI_LOGIN,       /* 密码登录 */
+    UI_PWD_SET,     /* 改密码（Settings 进入：输两遍，一致才生效） */
     UI_DESKTOP,     /* 桌面主界面 */
 } ui_state_t;
 
 static ui_state_t s_state = UI_BOOT;
-static char  s_pwd[4];          /* 已输入密码 */
+static char  s_pwd[4];          /* 已输入密码（登录/改密码共用输入缓冲） */
 static uint8_t s_pwd_len = 0;
 static uint8_t s_fail_cnt = 0;  /* 连续错误计数 */
+static uint8_t s_pwd_phase = 0; /* 改密码阶段：0=输新密码，1=再输一遍确认 */
+static char  s_pwd_verify[4];   /* 改密码第一遍暂存（第二遍逐位比对） */
 static int8_t  s_hover = 4;     /* 键盘高亮格索引 0~11 */
 static const app_t *s_cur_app = NULL;  /* 非空 = 应用前台态（注册表指针） */
 static int8_t  s_hover_icon = -1;      /* 桌面 hover 图标索引（-1 = 无） */
-static uint8_t s_clock_from_app = 0;   /* 校时界面来源：1=应用（Settings）进入，
-                                        * 完成后回桌面；0=开机自动进入，完成后回登录 */
+static uint8_t s_clock_from_app = 0;   /* 框架内跳转界面来源：1=应用（Settings）
+                                        * 进入（校时/改密码），完成后回桌面；
+                                        * 0=开机自动进入校时，完成后回登录 */
 static uint8_t  s_sleeping = 0;        /* 熄屏态：背光灭，任一输入事件唤醒 */
 static uint16_t s_idle_sec = 0;        /* 空闲累计秒数（EV_TICK 递增，输入重置） */
 
@@ -607,6 +614,43 @@ static void enter_login(void)
     cursor_show();
 }
 
+/* ---------- 改密码界面（UI_PWD_SET，Settings 入口） ----------
+ * 复用登录的键盘/圆点布局：输 4 位新密码 → 自动切"再输一遍确认"，
+ * 两遍一致立即落盘回桌面；不一致提示重来。K1 = 取消（回桌面） */
+
+/* 提示行按当前阶段重画：阶段 0 "New Password"，阶段 1 "Confirm PWD"；
+ * JS 未开时两阶段都显示引导（与登录界面同一逻辑） */
+static void pwd_set_hint(void)
+{
+    draw_hint(g_js_on ? (s_pwd_phase == 0 ? "New Password" : "Confirm PWD")
+                      : "Joystick OFF - Press K0",
+              g_js_on ? CLR_HINT : CLR_ERR);
+}
+
+static void enter_pwd_set(void)
+{
+    uint8_t i;
+
+    cursor_hide();   /* 同 enter_login：切换前先同步光标状态 */
+    atk_md0280_fill(0, 0, SCR_W - 1, SCR_H - 1, CLR_LOGIN_BG);
+    s_state = UI_PWD_SET;
+    s_pwd_phase = 0;
+    s_pwd_len = 0;
+    s_hover = 4;
+
+    draw_js_status();
+    pwd_set_hint();
+    draw_pwd_dots();
+    atk_md0280_show_string(24, 96, 200, 12, (char *)"Move: Joystick  OK: SW",
+                           ATK_MD0280_LCD_FONT_12, CLR_HINT);
+    for (i = 0; i < KEY_COLS * KEY_ROWS; i++) draw_key_cell(i, 0);
+    draw_key_cell(s_hover, 1);                       /* 初始高亮数字 5 */
+
+    /* 光标定位到数字 5 所在格中心 */
+    cursor_init(KEY_X0 + KEY_W / 2 + KEY_W, KEY_Y0 + KEY_H / 2 + KEY_H);
+    cursor_show();
+}
+
 /* 进入桌面：清屏 → 状态栏 → 2×2 图标 → 光标定位第一个图标 */
 static void enter_desktop(void)
 {
@@ -701,6 +745,14 @@ void desktop_enter_clock_set(void)
 {
     s_clock_from_app = 1;        /* 标记来源：完成后回桌面 */
     enter_clock_set();
+}
+
+/* Settings 的改密码入口：切到改密码界面（复用 s_clock_from_app：
+ * 完成后 clock_set_done 回桌面，Settings 顺带关闭） */
+void desktop_enter_pwd_set(void)
+{
+    s_clock_from_app = 1;
+    enter_pwd_set();
 }
 
 /* ui_task 读（LED 慢闪档判定）：熄屏管理都在本任务内（desktop_handle_event
@@ -867,9 +919,10 @@ void desktop_handle_event(input_event_t *ev)
                     s_pwd[s_pwd_len++] = c;
                     draw_pwd_dots();
                 }
-                if (s_pwd_len == 4) {        /* 满 4 位自动比对 */
+                if (s_pwd_len == 4) {        /* 满 4 位自动比对（密码在配置里，
+                                              * Settings 改过后这里自然用新密码） */
                     for (i = 0; i < 4; i++) {
-                        if (s_pwd[i] != LOGIN_PASSWORD[i]) { ok = 0; break; }
+                        if (s_pwd[i] != g_sys_cfg.pwd[i]) { ok = 0; break; }
                     }
                     s_pwd_len = 0;
                     draw_pwd_dots();
@@ -883,6 +936,97 @@ void desktop_handle_event(input_event_t *ev)
                             lock_screen();   /* 连续错误 → 锁定 */
                         } else {
                             draw_hint("Wrong Password", CLR_ERR);
+                        }
+                    }
+                }
+            }
+        }
+        break;
+    }
+
+    case UI_PWD_SET: {
+        /* 改密码（来源只有 Settings 的 Password 行）：键盘/圆点与登录共用，
+         * 交互也一致——满 4 位自动进下一阶段。阶段 0 输新密码 → 阶段 1
+         * 再输一遍：一致 → 写配置 + 立即落盘 → 回桌面；不一致 → 提示重来 */
+        uint16_t cx, cy;
+        cursor_get_pos(&cx, &cy);
+
+        if (ev->type == EV_DEV_TOGGLE) {
+            /* 设备开关变化（K0）：状态红/绿切换 + 提示行按阶段同步 */
+            draw_js_status();
+            pwd_set_hint();
+        } else if (ev->type == EV_MOUSE_MOVE) {
+            /* 光标已由 ui_task 移动：更新键盘高亮（重绘旧格+新格） */
+            uint8_t idx = hit_key(cx, cy);
+            if (idx != 0xFF && idx != s_hover) {
+                uint8_t hid;
+                uint16_t ox, oy, nx, ny, rx0, ry0, rx1, ry1;
+
+                ox = KEY_X0 + (s_hover % KEY_COLS) * KEY_W;
+                oy = KEY_Y0 + (s_hover / KEY_COLS) * KEY_H;
+                nx = KEY_X0 + (idx % KEY_COLS) * KEY_W;
+                ny = KEY_Y0 + (idx / KEY_COLS) * KEY_H;
+                rx0 = (ox < nx) ? ox : nx;
+                ry0 = (oy < ny) ? oy : ny;
+                rx1 = ((ox > nx) ? ox : nx) + KEY_W - 1;
+                ry1 = ((oy > ny) ? oy : ny) + KEY_H - 1;
+
+                hid = redraw_protect_begin(rx0, ry0, rx1, ry1);
+                draw_key_cell(s_hover, 0);
+                s_hover = idx;
+                draw_key_cell(idx, 1);
+                redraw_protect_end(hid);
+            }
+        } else if (ev->type == EV_BACK) {
+            /* K1 = 取消改密：不保存直接回桌面（来源必为 Settings，
+             * s_clock_from_app=1 → clock_set_done 回桌面） */
+            clock_set_done();
+        } else if (ev->type == EV_KEY_DOWN) {
+            uint8_t idx, i;
+            char c;
+
+            idx = hit_key(cx, cy);
+            if (idx == 0xFF) break;          /* 点在键盘区外，忽略 */
+            c = s_key[idx / KEY_COLS][idx % KEY_COLS];
+
+            if (c == '<') {                  /* 退格：删最后一位 */
+                if (s_pwd_len > 0) {
+                    s_pwd_len--;
+                    draw_pwd_dots();
+                }
+            } else if (c != '*') {           /* 数字 */
+                if (s_pwd_len < 4) {
+                    s_pwd[s_pwd_len++] = c;
+                    draw_pwd_dots();
+                }
+                if (s_pwd_len == 4) {        /* 满 4 位自动推进（无确认键） */
+                    if (s_pwd_phase == 0) {
+                        /* 第一遍：暂存 → 清输入 → 提示切 "Confirm PWD" */
+                        for (i = 0; i < 4; i++) s_pwd_verify[i] = s_pwd[i];
+                        s_pwd_phase = 1;
+                        s_pwd_len = 0;
+                        draw_pwd_dots();
+                        pwd_set_hint();
+                    } else {
+                        /* 第二遍：两遍一致才生效 */
+                        uint8_t match = 1;
+
+                        for (i = 0; i < 4; i++) {
+                            if (s_pwd[i] != s_pwd_verify[i]) { match = 0; break; }
+                        }
+                        s_pwd_len = 0;
+                        draw_pwd_dots();
+                        if (match) {
+                            memcpy(g_sys_cfg.pwd, s_pwd, 4);
+                            g_sys_cfg.pwd[4] = '\0';
+                            sys_cfg_save();    /* 密码即刻落盘（不等延迟合并） */
+                            clock_set_done();  /* 回桌面（全屏重绘）= 改密成功 */
+                        } else {
+                            /* 不一致：回到第一遍重输 */
+                            s_pwd_phase = 0;
+                            draw_hint("Mismatch! Retry", CLR_ERR);
+                            osDelay(800);      /* 红字停留片刻（同锁定阻塞先例） */
+                            pwd_set_hint();    /* 恢复阶段 0 提示 */
                         }
                     }
                 }

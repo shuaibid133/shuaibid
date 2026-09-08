@@ -22,6 +22,9 @@ typedef struct
     uint8_t js_lock;        /* JS Lock 开机摇杆默认状态：1=自动锁（默认 OFF，
                              * 需按 K0 开启——现状）；0=开机直接可用（跳过按 K0）。
                              * joystick_set_default 在 sys_cfg_load 后读取 */
+    char pwd[5];            /* 登录密码：4 位数字 '0'~'9' + '\0'（默认 "1234"）。
+                             * 登录/锁屏验证逐位比对；Settings 的 Password 项
+                             * 可改，改完立即 sys_cfg_save 落盘 */
 } sys_config_t;
 
 extern sys_config_t g_sys_cfg;

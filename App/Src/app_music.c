@@ -288,7 +288,9 @@ static void draw_row(uint8_t row, uint8_t hover)
 static void draw_status(void)
 {
     const song_t *sg = (s_song != NULL) ? s_song : &s_songs[s_row];
-    char buf[24];
+    char buf[28];   /* 状态缓冲：最长曲名 "Twinkle Little Star" 19 字符 + "Now: " 5
+                     * + NUL = 25。曾写成 buf[24]：选到该曲时 strcat 的 '\0'
+                     * 溢出 1 字节踩栈 → 同 Settings 溢出类问题，一并扩容 */
     uint32_t total_ms = 0, w;
     uint16_t i;
     uint8_t v = g_sys_cfg.volume;
