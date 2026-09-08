@@ -21,7 +21,8 @@
 #define JOY_STEP_MAX    8      /* 单次移动步长限幅 */
 #define K0_SHAKE_CNT    2      /* 消抖：连续 N 次采样一致才有效 */
 
-/* 设备开关：上电默认 OFF（未连接） */
+/* 设备开关：初值 OFF；开机默认态由配置 js_lock 决定（joystick_set_default，
+ * ui_task 在 sys_cfg_load 后调用——此前极短窗口为 OFF，用户操作不可达） */
 uint8_t g_js_on = 0;
 
 void joystick_toggle(void)
@@ -35,6 +36,14 @@ void joystick_toggle(void)
 uint8_t joystick_is_on(void)
 {
     return g_js_on;
+}
+
+/* 按配置设开机默认态（app_config.h 已 include）：sys_cfg_load 后调用一次。
+ * JS Lock=1（开，出厂/现状）→ OFF：开机需按 K0 解锁；
+ * JS Lock=0（关）→ ON：开机即可用，跳过按 K0 */
+void joystick_set_default(void)
+{
+    g_js_on = g_sys_cfg.js_lock ? 0 : 1;
 }
 
 /* 摇杆位移换算：返回 0 表示在死区内 */

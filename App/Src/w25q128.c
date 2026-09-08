@@ -15,6 +15,7 @@
  */
 #include "w25q128.h"
 #include "main.h"      /* W25Q_CS 引脚宏（CubeMX 生成，仅借用端口定义） */
+#include "sys_watch.h" /* 擦除长阻塞的心跳豁免（防哨兵误报 Task hung） */
 
 /* ---------- 命令码 ---------- */
 #define W25Q_CMD_WRITE_ENABLE   0x06
@@ -204,8 +205,14 @@ void w25q128_write(uint32_t addr, const uint8_t *buf, uint32_t n)
     }
 }
 
+/* 心跳豁免：克隆片 4K 扇区擦实测 1.5~2s，全片擦 40-60s，本驱动全程
+ * wait_busy 忙等（轮询 WIP 状态位，让不出 ui_task）——超过哨兵对
+ * ui_task 的 2s 卡死窗口会被如实"误报"成 Task hung。擦除是合法长
+ * 阻塞：临时把窗口拉大，擦完恢复 2s。放驱动层 = FATFS 缓存回写、
+ * 配置保存、Files/Paint、OTA 全路径统一覆盖，调用方无需各自豁免 */
 void w25q128_erase_sector(uint32_t addr)
 {
+    sys_watch_set_interval(WATCH_UI, 20000);   /* 豁免窗口（扇区擦 6.8s 上限 + 余量） */
     write_enable();
     bb_cs_low();
     bb_byte(W25Q_CMD_SECTOR_ERASE);
@@ -215,6 +222,7 @@ void w25q128_erase_sector(uint32_t addr)
     bb_cs_high();
     wait_busy(800000);                       /* 4K 擦除典型 40ms，最坏 400ms；上限 800k 轮
                                               * ≈ 6.8s 保险（克隆片擦除慢，防误判完成） */
+    sys_watch_set_interval(WATCH_UI, 2000);  /* 擦完恢复 2s 哨兵窗口 */
 }
 
 /* 全片擦除（0xC7）：重建卷（f_mkfs）后调用，把整个数据区一次性清成
@@ -225,10 +233,12 @@ void w25q128_erase_sector(uint32_t addr)
  * 必须重新 f_mkfs；本函数只擦不写 */
 void w25q128_chip_erase(void)
 {
+    sys_watch_set_interval(WATCH_UI, 120000);  /* 全片擦 40-60s：豁免窗口拉满 2 分钟 */
     write_enable();
     bb_cs_low();
     bb_byte(0xC7);
     bb_cs_high();
     wait_busy(6000000);                      /* 全片擦除典型 40-60s；上限 600 万轮
                                               * ≈ 60s（克隆片更慢，防误判完成） */
+    sys_watch_set_interval(WATCH_UI, 2000);  /* 擦完恢复 2s 哨兵窗口 */
 }

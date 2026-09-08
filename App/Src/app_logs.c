@@ -52,6 +52,7 @@ static const char *const s_msg[LOG_MSG_N] = {
     "Brightness set",       /* LOG_SET_BRIGHT */
     "Volume set",           /* LOG_SET_VOL */
     "Screen time set",      /* LOG_SET_STIME */
+    "JS Lock set",          /* LOG_SET_JSLOCK */
     "Input lost",           /* LOG_INPUT_LOST */
     "Input back",           /* LOG_INPUT_RECOVER */
     "Screen off",           /* LOG_SCREEN_OFF */

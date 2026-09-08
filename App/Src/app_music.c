@@ -256,13 +256,13 @@ static void music_pwm_init(void)
     HAL_TIM_PWM_ConfigChannel(&g_htim2, &oc, TIM_CHANNEL_2);
 }
 
-/* 画一行：hover=1 蓝底白字；右侧状态标记（[>>] 播放中 / [||] 暂停） */
+/* 画一行：hover=1 品牌品红底白字（与标题栏同色）；右侧状态标记（[>>] 播放中 / [||] 暂停） */
 static void draw_row(uint8_t row, uint8_t hover)
 {
     uint16_t y = SONG_Y0 + row * SONG_ROW_H;
     char line[24];
     const char *mark = "";
-    uint16_t mark_c = ATK_MD0280_BLUE;
+    uint16_t mark_c = ATK_MD0280_MAGENTA;   /* 停播标记默认品牌色（播放/暂停另有语义色） */
 
     line[0] = (char)('1' + row);
     line[1] = '.';
@@ -276,7 +276,7 @@ static void draw_row(uint8_t row, uint8_t hover)
     }
 
     atk_md0280_fill(0, y - 2, SCR_W - 1, y + SONG_ROW_H - 3,
-                    hover ? ATK_MD0280_BLUE : ATK_MD0280_WHITE);
+                    hover ? ATK_MD0280_MAGENTA : ATK_MD0280_WHITE);
     atk_md0280_show_string(16, y + 7, 170, 16, line, ATK_MD0280_LCD_FONT_16,
                            hover ? ATK_MD0280_WHITE : ATK_MD0280_BLACK);
     if (mark[0] != 0)
@@ -302,7 +302,7 @@ static void draw_status(void)
         strcpy(buf, "Now: ");
         strcat(buf, s_song->name);
         atk_md0280_show_string(16, STAT_Y0 + 4, 200, 16, buf, ATK_MD0280_LCD_FONT_16,
-                               ATK_MD0280_BLUE);
+                               ATK_MD0280_MAGENTA);   /* "Now:" 也走品牌色 */
     } else {
         atk_md0280_show_string(16, STAT_Y0 + 4, 200, 16, (char *)"Select a song",
                                ATK_MD0280_LCD_FONT_16, ATK_MD0280_GRAY);
@@ -321,13 +321,13 @@ static void draw_status(void)
     atk_md0280_show_string(16, STAT_Y0 + 24, 200, 12, buf, ATK_MD0280_LCD_FONT_12,
                            ATK_MD0280_GRAY);
 
-    /* 进度条：浅灰底 200px（驱动无浅灰宏，手写 0xDEFB），蓝色按进度填充 */
+    /* 进度条：浅灰底 200px（驱动无浅灰宏，手写 0xDEFB），品牌品红按进度填充 */
     atk_md0280_fill(16, STAT_Y0 + 42, 216, STAT_Y0 + 50, 0xDEFB);
     if (total_ms > 0) {
         w = 200u * s_elapsed_ms / total_ms;
         if (w > 200) w = 200;
         if (w > 0)
-            atk_md0280_fill(16, STAT_Y0 + 42, (uint16_t)(16 + w), STAT_Y0 + 50, ATK_MD0280_BLUE);
+            atk_md0280_fill(16, STAT_Y0 + 42, (uint16_t)(16 + w), STAT_Y0 + 50, ATK_MD0280_MAGENTA);
     }
 }
 
@@ -342,13 +342,13 @@ static void refresh_all(void)
     draw_status();
 }
 
-/* 底部按钮区：Prev / Next / Mode（hover 蓝底白字，MODE 显示当前模式） */
+/* 底部按钮区：Prev / Next / Mode（hover 品牌品红底白字，MODE 显示当前模式） */
 static void draw_btns(void)
 {
     static const char *const m[3] = { "MODE ALL", "MODE ONE", "MODE RND" };
     uint8_t i, hid;
 
-    /* 与列表 hover 同协议：光标压在按钮区时先藏后画。否则 fill 蓝底
+    /* 与列表 hover 同协议：光标压在按钮区时先藏后画。否则 fill 品红底
      * 会把光标箭头盖掉——切模式/移入按钮时光标从屏幕消失且恢复错乱 */
     hid = redraw_protect_begin(0, BTN_Y0, SCR_W - 1, BTN_Y0 + BTN_H - 1);
 
@@ -364,7 +364,7 @@ static void draw_btns(void)
         else        txt = (i == 0) ? "<< Prev" : "Next >>";
 
         atk_md0280_fill(x0, BTN_Y0, x1, BTN_Y0 + BTN_H - 1,
-                        hov ? ATK_MD0280_BLUE : ATK_MD0280_WHITE);
+                        hov ? ATK_MD0280_MAGENTA : ATK_MD0280_WHITE);
         atk_md0280_show_string(x0 + 5, BTN_Y0 + 3, w - 10, 16, (char *)txt,
                                ATK_MD0280_LCD_FONT_16,
                                hov ? ATK_MD0280_WHITE : ATK_MD0280_BLACK);
@@ -569,4 +569,12 @@ void app_music_close(void)
     s_elapsed_ms = 0;
     HAL_TIM_PWM_Stop(&g_htim2, TIM_CHANNEL_2);
     app_music_pin_idle();   /* 切回推挽输出高：100% 静音 */
+}
+
+/* ui_task 读（LED 快闪档判定）：播放中且未暂停才算"真在播"。
+ * 两标志分别由 ui_task 事件线程（open/close/pause）与 music_task
+ * （播完自动停 s_playing=0）写——单字节 volatile，无锁可读 */
+uint8_t app_music_is_playing(void)
+{
+    return (uint8_t)(s_playing && !s_paused);
 }

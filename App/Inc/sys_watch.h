@@ -29,7 +29,7 @@
 
 void sys_watch_beat(uint8_t slot);   /* 任务循环里打卡：记当前 tick */
 void sys_watch_check(void);          /* 哨兵每轮调用：超时打卡 → 记日志 */
-void sys_watch_set_interval(uint8_t slot, uint16_t ms);
+void sys_watch_set_interval(uint8_t slot, uint32_t ms);
                                      /* 临时放宽阈值：长阻塞操作（Flash 擦写）
                                        前声明豁免窗口，哨兵不误报卡死 */
 

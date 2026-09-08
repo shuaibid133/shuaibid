@@ -10,9 +10,14 @@
 
 #include "event.h"
 
-/* 设备开关：上电默认 OFF（未连接），K0 按下取反。
- * 单字节、input_task 独占写、ui_task 只读——CM3 单字节访问天然原子，无需锁 */
+/* 设备开关：初值 OFF，K0 按下取反；开机默认态由配置 js_lock 决定
+ * （joystick_set_default，见下）。单字节、input_task 独占写、ui_task
+ * 只读——CM3 单字节访问天然原子，无需锁 */
 extern uint8_t g_js_on;
+
+/* 按配置设开机默认态：js_lock=1 → OFF（现状，按 K0 开）；js_lock=0 → ON
+ * （开机直接可用）。由 ui_task 在 sys_cfg_load 后调用一次 */
+void joystick_set_default(void);
 
 /* 扫描一次输入设备（15ms 周期由 input_task 调用）：
  * 产生事件时填充 *ev 并返回 1，无事件返回 0 */

@@ -577,12 +577,15 @@ static void draw_status(void)
     } else if (g_fs_ready) {
         if (f_getfree("0:", &fre, &pf) == FR_OK) kb = fre * pf->csize / 2;  /* 512B 扇区 → KB */
         atk_md0280_show_string(8, 256, 140, 16, (char *)"Flash: W25Q128", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
-        atk_md0280_show_string(8, 276, 44, 16, (char *)"Free", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
-        atk_md0280_show_xnum(48, 276, kb, 6, ATK_MD0280_NUM_SHOW_NOZERO,
+        /* 行距 16（非 20）：Files 行 288 起、字形底 303，才让开底行灰色
+         * 提示（306 起）——旧布局 296 起与提示叠 6 行，状态区长期叠着
+         * 一层"黑字底半截 + 灰字"的混合残像 */
+        atk_md0280_show_string(8, 272, 44, 16, (char *)"Free", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+        atk_md0280_show_xnum(48, 272, kb, 6, ATK_MD0280_NUM_SHOW_NOZERO,
                              ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
-        atk_md0280_show_string(112, 276, 24, 16, (char *)"KB", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
-        atk_md0280_show_string(8, 296, 120, 16, (char *)"Files:", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
-        atk_md0280_show_xnum(64, 296, g_total_count, 3, ATK_MD0280_NUM_SHOW_NOZERO,
+        atk_md0280_show_string(112, 272, 24, 16, (char *)"KB", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+        atk_md0280_show_string(8, 288, 120, 16, (char *)"Files:", ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
+        atk_md0280_show_xnum(64, 288, g_total_count, 3, ATK_MD0280_NUM_SHOW_NOZERO,
                              ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
     }
     atk_md0280_show_string(8, 306, 150, 12, (char *)"SW: use  K1: exit", ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
@@ -726,12 +729,15 @@ static void draw_view(void)
     atk_md0280_show_string(8, 30, 150, 16, g_view_name, ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
     atk_md0280_show_xnum(170, 32, g_view_size, 6, ATK_MD0280_NUM_SHOW_NOZERO,
                          ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
-    for (i = 0; i < g_view_lines && i < VIEW_LINES; i++) {
+    /* 内容行上限 VIEW_LINES-2：行 18 之后是 "(truncated)"（y=290）与底部
+     * 操作提示（y=306）。行 19 起点 y=299，字形会与两者重叠——旧版大文件
+     * 在此叠出黑灰小字残像 */
+    for (i = 0; i < g_view_lines && i < VIEW_LINES - 2; i++) {
         if (g_view_grid[i][0] == 0) break;   /* 空行跳过（内容结束） */
         atk_md0280_show_string(4, 52 + i * 13, 240, 12, g_view_grid[i],
                                ATK_MD0280_LCD_FONT_12, ATK_MD0280_BLACK);
     }
-    if (g_view_size > VIEW_LINES * VIEW_CHARS) {
+    if (g_view_lines > VIEW_LINES - 2) {
         atk_md0280_show_string(4, 290, 120, 12, (char *)"...(truncated)", ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
     }
     atk_md0280_show_string(8, 306, 150, 12, (char *)"SW: close  K1: exit", ATK_MD0280_LCD_FONT_12, ATK_MD0280_GRAY);
@@ -766,10 +772,11 @@ static void update_selection(void)
     }
     if (sel != g_sel) {
         g_sel = (int8_t)sel;
+        if (sel >= 0) g_sel_last = (int8_t)sel;  /* 先记后画：Sel: 文本才跟得上高亮
+                                                  *（Del 按钮同样用 g_sel_last） */
         draw_list();
         draw_toolbar();                      /* 右侧选中信息同步刷新 */
     }
-    if (sel >= 0) g_sel_last = (int8_t)sel;  /* 记住最后选中（Del 按钮用） */
 }
 
 void app_files_handle(input_event_t *ev)

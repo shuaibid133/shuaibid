@@ -15,7 +15,7 @@ static uint8_t s_hung[WATCH_N] = {0};        /* 去抖：已报过卡死，恢�
 
 /* 各任务卡死判定阈值（tick=1ms）。非 const：⑥ 伪 OTA 的长阻塞操作
  * （Flash 擦写 2s/扇区）需要临时豁免窗口，避免哨兵误报卡死 */
-static uint16_t s_watch_ms[WATCH_N] = {
+static uint32_t s_watch_ms[WATCH_N] = {
     1000,   /* WATCH_INPUT：15ms 周期，60 拍没打卡 = 死 */
     3000,   /* WATCH_MUSIC：事件驱动，音符最长 1s + 间隙 */
     2000,   /* WATCH_UI：EV_TICK 每秒必有 */
@@ -26,7 +26,7 @@ void sys_watch_beat(uint8_t slot)
     if (slot < WATCH_N) g_watch_beat[slot] = xTaskGetTickCount();
 }
 
-void sys_watch_set_interval(uint8_t slot, uint16_t ms)
+void sys_watch_set_interval(uint8_t slot, uint32_t ms)
 {
     if (slot < WATCH_N && ms > 0) s_watch_ms[slot] = ms;
 }

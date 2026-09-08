@@ -385,18 +385,21 @@ static void draw_status_area(void)
                                ATK_MD0280_LCD_FONT_12, ATK_MD0280_RED);
 }
 
-/* 色格：外框 2px（选中=蓝，未选=浅灰），内实心色 */
+/* 色格：外框 2px（选中=品牌绿，未选=浅灰），内实心色 */
 static void draw_color_cell(int8_t i)
 {
     uint16_t x = COLOR_X0 + i * COLOR_STEP;
+    uint16_t ring = ATK_MD0280_GREEN;   /* 选中框 = 品牌绿（与标题栏同色） */
 
+    if (s_colors[i] == ring) ring = ATK_MD0280_BLACK;  /* 撞色保护：盘里就有绿色块，
+                                                         * 同色框看不见，反用黑框 */
     atk_md0280_fill(x, COLOR_Y0, (uint16_t)(x + 35), COLOR_Y1,
-                    (i == s_color_idx) ? ATK_MD0280_BLUE : 0xBDF7);
+                    (i == s_color_idx) ? ring : 0xBDF7);
     atk_md0280_fill((uint16_t)(x + 2), (uint16_t)(COLOR_Y0 + 2),
                     (uint16_t)(x + 33), (uint16_t)(COLOR_Y1 - 2), s_colors[i]);
 }
 
-/* CLR/SAVE 按钮：hover=蓝底白字，否则浅灰底黑字 */
+/* CLR/SAVE 按钮：hover=品牌绿底黑字（与标题栏同色，亮底配黑字），否则浅灰底黑字 */
 static void draw_cmd_btn(int8_t i)
 {
     uint16_t x = (i == 6) ? CLR_X : SAVE_X;
@@ -404,11 +407,11 @@ static void draw_cmd_btn(int8_t i)
     const char *lbl = (i == 6) ? "CLR" : "SAVE";
 
     atk_md0280_fill(x, BTN_Y0, (uint16_t)(x + BTN_W - 1), BTN_Y1,
-                    hover ? ATK_MD0280_BLUE : 0xBDF7);
+                    hover ? ATK_MD0280_GREEN : 0xBDF7);
     atk_md0280_show_string((uint16_t)(x + (BTN_W - strlen(lbl) * 8) / 2),
                            (uint16_t)(BTN_Y0 + 9), BTN_W, 16, (char *)lbl,
                            ATK_MD0280_LCD_FONT_12,
-                           hover ? ATK_MD0280_WHITE : ATK_MD0280_BLACK);
+                           ATK_MD0280_BLACK);   /* 绿/浅灰底都配黑字 */
 }
 
 /* 整个工具栏重绘（色格 + 按钮 + 状态区） */

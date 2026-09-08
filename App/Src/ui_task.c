@@ -11,6 +11,7 @@
 #include "desktop.h"
 #include "rtc_app.h"
 #include "sys_cfg.h"
+#include "joystick.h"
 #include "sys_backlight.h"
 #include "app_music.h"
 #include "app_config.h"
@@ -31,6 +32,41 @@
 #define WDG_DEMO_UI_HANG       0
 #define WDG_DEMO_UI_HANG_AT    10000   /* 开机 10s 起 */
 #define WDG_DEMO_UI_HANG_MS    10000   /* 卡死时长 */
+
+/* ---- 诊断灯三档节奏（实现见 ui_task 前 led_check） ---- */
+#define LED_NORMAL_MS   1000    /* 正常：每秒一翻（EV_TICK 驱动） */
+#define LED_FAST_MS     250     /* 播放中：快闪（主循环超时驱动） */
+#define LED_ON_MS_SLOW  200     /* 熄屏：短亮 */
+#define LED_OFF_MS_SLOW 2300    /* 熄屏：长灭（不对称=与 IWDG 复位循环区分） */
+
+/* 诊断灯状态（仅 ui_task 线程访问，无锁） */
+static uint8_t  s_led_on = 0;    /* 当前：1=亮（低电平点亮） */
+static uint32_t s_led_last = 0;  /* 上次翻转时刻（tick） */
+
+/* 三档节奏检查：每个醒来点（事件或超时）调用，到点翻转。
+ * 档位优先级：熄屏 > 播放 > 正常——
+ *   熄屏 = 短亮长灭 200ms/2300ms：不对称节奏与 IWDG 复位循环的
+ *          "长亮长灭"一眼可分；长灭段低占空，夜里不刺眼
+ *   播放 = 250ms 快闪（屏幕亮着，LED 活跃信号）
+ *   正常 = 每秒一翻（诊断语义不变：灯停 = 卡死/复位） */
+static void led_check(void)
+{
+    uint32_t now, dt, flip;
+
+    now = xTaskGetTickCount();
+    dt = now - s_led_last;       /* 无符号差：回绕自动正确 */
+
+    if (desktop_is_sleeping())            flip = s_led_on ? LED_ON_MS_SLOW : LED_OFF_MS_SLOW;
+    else if (app_music_is_playing())      flip = LED_FAST_MS;
+    else                                  flip = LED_NORMAL_MS;
+
+    if (dt >= flip) {
+        s_led_on = (uint8_t)!s_led_on;
+        s_led_last = now;
+        if (s_led_on) HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+        else          HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+    }
+}
 
 void ui_task(void *argument)
 {
@@ -55,6 +91,7 @@ void ui_task(void *argument)
         sys_backlight_init();          /* 先点亮背光（默认亮度），再加载配置——
                                         * 即使配置读取异常，屏幕也可见（好诊断） */
         sys_cfg_load();                /* Flash → g_sys_cfg：灵敏度/亮度等在登录前生效 */
+        joystick_set_default();        /* JS Lock 配置生效：锁=OFF（按 K0 开）/不锁=ON */
         sys_backlight_set(g_sys_cfg.brightness);   /* 应用配置的亮度 */
         app_music_pin_idle();          /* Music 蜂鸣器空闲静音：PA1 推挽输出高。
                                         * 开机即拉高，进 Music 前不依赖任何应用
@@ -82,6 +119,7 @@ void ui_task(void *argument)
     sys_ota_boot_check();
 
     HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);   /* 灭：初始化全完成 */
+    s_led_last = xTaskGetTickCount();   /* 灯时基起点：避免首事件误翻一次 */
 
     for (;;)
     {
@@ -101,7 +139,14 @@ void ui_task(void *argument)
             }
         }
 
-        if (xQueueReceive(g_event_queue, &ev, portMAX_DELAY) == pdPASS)
+        /* 播放/熄屏时用 250ms 超时轮询：快档/慢档需要比 EV_TICK（1 秒）
+         * 更细的时基。超时空醒只做 LED 档位检查，不进事件处理——
+         * 统计/哨兵/桌面状态机都在 pdPASS 分支跑，空醒零副作用。
+         * 正常态仍 portMAX_DELAY 纯事件驱动，灯由每秒 EV_TICK 驱动 */
+        if (xQueueReceive(g_event_queue, &ev,
+                          (desktop_is_sleeping() || app_music_is_playing())
+                              ? pdMS_TO_TICKS(LED_FAST_MS) : portMAX_DELAY)
+            == pdPASS)
         {
             /* 进阶④ 负载分析（消费侧统计，满足单写者）：
              * 排队延迟 = 当前 tick - 生产 tick（1kHz → 单位 ms；
@@ -144,8 +189,12 @@ void ui_task(void *argument)
              * 每轮循环都打卡，哨兵（input_task）据此判定本任务是否卡死 */
             sys_watch_beat(WATCH_UI);
 
-            /* 诊断灯：每秒闪一下 = 事件循环活着 */
-            if (ev.type == EV_TICK) HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+            /* 诊断灯：三档节奏检查——灯在闪 = 事件循环活着 */
+            led_check();
+        }
+        else
+        {
+            led_check();   /* 250ms 超时空醒：只推进灯节奏（播放/熄屏档） */
         }
     }
 }

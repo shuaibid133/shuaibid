@@ -18,6 +18,7 @@
 #include "app_logs.h"
 #include "app_ota.h"
 #include "cursor.h"
+#include <string.h>
 #include "./BSP/ATK_MD0280/atk_md0280.h"
 
 #define SCR_W   ATK_MD0280_LCD_WIDTH
@@ -42,27 +43,52 @@ static void app_stub_open(void)
 }
 
 /* ---------- 应用注册表 ----------
- * 颜色：图标色块（RGB565）；桌面图标/hover 遍历此表绘制
+ * 颜色：图标底色（RGB565）。桌面扁平化图标符号为白色/黑色，
+ * 因此浅色底（亮青/亮灰）换成深青/深灰保证对比度；桌面/hover 遍历此表绘制
  * close：退出钩子（K1 返回时框架调用），无退出清理的填 NULL */
 const app_t g_apps[] = {
     {"Files",    ATK_MD0280_BLUE,     app_files_open,    app_files_handle,    NULL},
     {"Paint",    ATK_MD0280_GREEN,    app_paint_open,    app_paint_handle,    NULL},
     {"Music",    ATK_MD0280_MAGENTA,  app_music_open,    app_music_handle,    app_music_close},
     {"Settings", ATK_MD0280_YELLOW,   app_settings_open, app_settings_handle, app_settings_close},
-    {"Logs",     ATK_MD0280_CYAN,     app_logs_open,     app_logs_handle,     NULL},
-    {"Monitor",  ATK_MD0280_GRAY,     app_monitor_open,  app_monitor_handle,  NULL},
+    {"Logs",     0x0410,              app_logs_open,     app_logs_handle,     NULL},
+    {"Monitor",  0x4208,              app_monitor_open,  app_monitor_handle,  NULL},
     {"OTA",      ATK_MD0280_RED,      app_ota_open,      app_ota_handle,      NULL},
 };
 
 const uint8_t g_app_count = sizeof(g_apps) / sizeof(g_apps[0]);
 
 /* ---------- 应用公共标题栏 ----------
- * 蓝条：左侧应用名，右侧 "K1:Back" 返回提示（返回入口永远可见） */
+ * 品牌色条：底色 = 注册表品牌色（与桌面图标同色，打开应用一眼认出），
+ * 左侧应用名 + 右侧 "K1:Back" 返回提示（返回入口永远可见）。
+ * 文字黑/白自动：亮底（Settings 黄）黑字，深底白字，保证对比度 */
+static uint16_t title_bg(const char *name)
+{
+    uint8_t i;
+
+    for (i = 0; i < g_app_count; i++) {
+        if (strcmp(g_apps[i].name, name) == 0) return g_apps[i].color;
+    }
+    return ATK_MD0280_BLUE;   /* 查不到（占位等）回落默认蓝 */
+}
+
+static uint16_t title_fg(uint16_t bg)
+{
+    uint32_t lum = (uint32_t)((bg >> 11) & 0x1F) * 3
+                 + (uint32_t)((bg >> 5) & 0x3F) * 6
+                 + (uint32_t)(bg & 0x1F);
+
+    return (lum > 200) ? ATK_MD0280_BLACK : ATK_MD0280_WHITE;
+}
+
 void app_draw_title(const char *name)
 {
-    atk_md0280_fill(0, 0, SCR_W - 1, 24, ATK_MD0280_BLUE);
+    uint16_t bg = title_bg(name);
+    uint16_t fg = title_fg(bg);
+
+    atk_md0280_fill(0, 0, SCR_W - 1, 24, bg);
     atk_md0280_show_string(8, 5, 150, 16, (char *)name,
-                           ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
+                           ATK_MD0280_LCD_FONT_16, fg);
     atk_md0280_show_string(160, 5, 80, 16, (char *)"K1:Back",
-                           ATK_MD0280_LCD_FONT_16, ATK_MD0280_WHITE);
+                           ATK_MD0280_LCD_FONT_16, fg);
 }

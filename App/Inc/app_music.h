@@ -8,4 +8,8 @@ void app_music_handle(input_event_t *ev);
 void app_music_close(void);
 void app_music_pin_idle(void);   /* PA1 推挽输出高（空闲静音），ui_task 启动时调用 */
 
+/* 是否正在播放（s_playing && !s_paused）。ui_task 事件线程读、
+ * music_task 内状态线程写——单字节 volatile，跨任务读无需锁 */
+uint8_t app_music_is_playing(void);
+
 #endif

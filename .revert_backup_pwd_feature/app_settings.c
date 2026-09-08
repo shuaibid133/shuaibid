@@ -3,8 +3,9 @@
  * @brief   Settings 应用：系统设置调节 + 持久化 + 校时入口
  *
  * 功能（对照题目）：
- *   - 7 行列表：Cursor Sens / Cursor Size / Brightness / Volume /
- *     Screen Off / JS Lock / Set Clock（校时入口，复用开机校时界面）
+ *   - 8 行列表：Cursor Sens / Cursor Size / Brightness / Volume /
+ *     Screen Off / JS Lock / Password（改登录密码，两遍确认）/
+ *     Set Clock（校时入口，复用开机校时界面）
  *   - 交互：光标上下移选行（品牌黄底高亮，黑字）；每行右侧有 [-] [+] 两个按钮，
  *     光标移到按钮上（反色提示）按 SW 调节一格——"点按钮调值"
  *   - 即改即生效：灵敏度 joystick 实时读、光标大小 hide/show 重画、
@@ -31,8 +32,8 @@
 
 /* ---------- 布局 ---------- */
 #define SET_Y0      52               /* 列表区起始 y（标题栏 24 + 提示行 28） */
-#define SET_ROW_H   30               /* 行高（7 行 → 52..262，屏幕 320 内） */
-#define SET_ROWS    7
+#define SET_ROW_H   30               /* 行高（8 行 → 52..289，屏幕 320 内） */
+#define SET_ROWS    8
 #define BTN_W       28               /* [-] [+] 按钮尺寸（行内垂直居中） */
 #define BTN_H       20
 #define BTN_MINUS_X 156              /* [-] 按钮 x 范围 156~184 */
@@ -73,7 +74,7 @@ static void fmt_u8(char *buf, uint8_t v)
 
 /* 画一行：hover=1 品牌黄底黑字（与标题栏同色，亮底必配黑字），0 白底黑字。
  * 名称 + 右侧当前值 + [-][+] 按钮
- * （Set Clock 行除外：它没有按钮，值是 "Enter >"，SW 直接进校时） */
+ * （Password/Set Clock 行除外：没有按钮，SW 直接进专用键盘界面） */
 static void draw_row(uint8_t row, uint8_t hover)
 {
     uint16_t x = 0, y, by;
@@ -95,7 +96,9 @@ static void draw_row(uint8_t row, uint8_t hover)
                                       * 开机按 K0 开）；Off=开机直接可用 */
         strcpy(val, g_sys_cfg.js_lock ? "On" : "Off");
         break;
-    default: name = "Set Clock"; strcpy(val, "Enter >"); break;   /* row 6 */
+    case 6: name = "Password"; strcpy(val, "Change >"); break;  /* 改登录密码
+                                      *（专用键盘界面，输两遍确认后生效） */
+    default: name = "Set Clock"; strcpy(val, "Enter >"); break;   /* row 7 */
     }
 
     atk_md0280_fill(0, y - 2, SCR_W - 1, y + SET_ROW_H - 3, hover ? ATK_MD0280_YELLOW : ATK_MD0280_WHITE);
@@ -105,7 +108,7 @@ static void draw_row(uint8_t row, uint8_t hover)
     atk_md0280_show_string(x, y + 7, 60, 16, val, ATK_MD0280_LCD_FONT_16,
                            hover ? ATK_MD0280_BLACK : ATK_MD0280_BLUE);
 
-    if (row == 6) return;            /* Set Clock 行无按钮（JS Lock 行有 [-] [+]） */
+    if (row >= 6) return;            /* Password/Set Clock 行无按钮（都是 SW 直进） */
 
     /* [-] [+] 按钮：行内垂直居中；光标 hover 的按钮品牌黄底黑字，其余灰底黑字 */
     by = y + (SET_ROW_H - BTN_H) / 2;
@@ -208,7 +211,7 @@ static void adjust(int8_t dir)
         }
         break;
     default:
-        return;    /* Set Clock 行不可调 */
+        return;    /* Password/Set Clock 行不可调 */
     }
 
     s_dirty = 1;
@@ -221,7 +224,7 @@ static void adjust(int8_t dir)
     }
 }
 
-/* 进入应用：清屏 → 标题 → 提示 → 7 行 → 光标定位第一行 */
+/* 进入应用：清屏 → 标题 → 提示 → 8 行 → 光标定位第一行 */
 void app_settings_open(void)
 {
     uint8_t i;
@@ -281,10 +284,12 @@ void app_settings_handle(input_event_t *ev)
             else s_idle++;
         }
     } else if (ev->type == EV_KEY_DOWN) {
-        if (s_row == 6) {
-            /* 校时入口：未落盘修改先保存，再进校时界面（完成后回桌面） */
+        if (s_row >= 6) {
+            /* Password/Set Clock 入口：未落盘修改先保存再跳转。跳转后 Settings
+             * 由 enter_desktop 直接关闭（close 钩子不跑），不先存会丢修改 */
             if (s_dirty) { sys_cfg_save(); s_dirty = 0; }
-            desktop_enter_clock_set();
+            if (s_row == 6) desktop_enter_pwd_set();   /* 改密码（两遍确认） */
+            else desktop_enter_clock_set();            /* 校时 */
         } else if (s_btn_hover == 1) {
             adjust(-1);          /* 光标在 [-] 上按 SW：减一格 */
         } else if (s_btn_hover == 2) {

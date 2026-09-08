@@ -39,6 +39,7 @@ typedef enum {
     LOG_SET_BRIGHT,      /* 亮度（param=新值%） */
     LOG_SET_VOL,         /* 音量（param=新值%） */
     LOG_SET_STIME,       /* 熄屏时间（param=新值秒） */
+    LOG_SET_JSLOCK,      /* JS Lock 开关（param=新值 0/1） */
 
     /* ---- 输入设备断开与恢复 ---- */
     LOG_INPUT_LOST,      /* 摇杆断开（K0 关闭设备） */

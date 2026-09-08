@@ -48,6 +48,7 @@ void sys_cfg_load(void)
     g_sys_cfg.screen_time = 60;
     g_sys_cfg.version     = 1;   /* 出厂版本 V1.0 */
     g_sys_cfg.js_lock     = 1;   /* 出厂 JS Lock：开（摇杆默认 OFF，按 K0 用） */
+    strcpy(g_sys_cfg.pwd, "1234");   /* 出厂登录密码 */
 
     w25q128_read(CFG_SECTOR, s_buf, sizeof(s_buf));
     if (s_buf[0] == 0xFF && s_buf[1] == 0xFF) return;   /* 擦除态：从未保存过（首启，不算损坏） */
@@ -77,6 +78,18 @@ void sys_cfg_load(void)
     if (g_sys_cfg.screen_time > 300) g_sys_cfg.screen_time = 60;
     if (g_sys_cfg.version < 1 || g_sys_cfg.version > 99) g_sys_cfg.version = 1;
     if (g_sys_cfg.js_lock > 1) g_sys_cfg.js_lock = 1;   /* 布尔值：脏数据一律按 1（自动锁，最保守） */
+
+    /* 密码钳制：任一位不是数字 = 脏数据（半写/擦除态 0xFF 都是垃圾字节）→
+     * 整体回默认。必须兜底——带垃圾字节的密码会让登录比对永远失败锁死入口 */
+    {
+        uint8_t i;
+        for (i = 0; i < 4; i++) {
+            if (g_sys_cfg.pwd[i] < '0' || g_sys_cfg.pwd[i] > '9') {
+                strcpy(g_sys_cfg.pwd, "1234");
+                break;
+            }
+        }
+    }
 }
 
 void sys_cfg_save(void)

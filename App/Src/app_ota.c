@@ -84,9 +84,9 @@ static void draw_progress(uint8_t pct, const char *label)
 {
     atk_md0280_fill(16, 104, 240, 152, ATK_MD0280_WHITE);
     atk_md0280_show_string(16, 104, 220, 16, (char *)label, ATK_MD0280_LCD_FONT_16, ATK_MD0280_BLACK);
-    atk_md0280_draw_rect(16, 128, 236, 152, ATK_MD0280_BLUE);
+    atk_md0280_draw_rect(16, 128, 236, 152, ATK_MD0280_RED);   /* 品牌红（与标题栏同色） */
     if (pct > 0)
-        atk_md0280_fill(18, 130, (uint16_t)(18 + (216u * pct) / 100u - 1u), 150, ATK_MD0280_BLUE);
+        atk_md0280_fill(18, 130, (uint16_t)(18 + (216u * pct) / 100u - 1u), 150, ATK_MD0280_RED);
 }
 
 static void draw_btn(uint8_t which, const char *label)
@@ -95,7 +95,7 @@ static void draw_btn(uint8_t which, const char *label)
     uint8_t on = (s_btn_hover == which);
 
     atk_md0280_fill(BTN_X0, y, BTN_X0 + BTN_W - 1, y + BTN_H - 1,
-                    on ? ATK_MD0280_BLUE : ATK_MD0280_GRAY);
+                    on ? ATK_MD0280_RED : ATK_MD0280_GRAY);   /* hover = 品牌红（白字） */
     atk_md0280_show_string(BTN_X0 + (BTN_W - strlen(label) * 16) / 2, y + 12,
                            BTN_W, 16, (char *)label, ATK_MD0280_LCD_FONT_16,
                            on ? ATK_MD0280_WHITE : ATK_MD0280_BLACK);
