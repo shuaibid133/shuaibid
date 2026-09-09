@@ -24,3 +24,9 @@ JLinkSettings.ini
 Thumbs.db
 Desktop.ini
 MDK-ARM/build_check.txt
+
+# 编译列表文件（Keil 生成的 .lst）
+*.lst
+
+# 本地临时备份目录（不进仓库，磁盘上保留）
+.revert_backup_pwd_feature/
